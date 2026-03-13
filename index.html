@@ -38,14 +38,14 @@
           <p>Save your private key now. It will <strong class="amber">NOT</strong> be stored anywhere. If you lose it, your identity is gone forever. Your DM key is derived automatically and persists in localStorage.</p>
         </div>
         <div class="field-group field-group-rel">
-          <label class="field-label">Signing Private Key (PKCS#8 PEM)</label>
-          <div class="key-display" id="priv-key-display">Generating...</div>
-          <button class="copy-btn" id="copy-priv-btn">COPY</button>
+          <label class="field-label priv-label">&#9888; SIGNING PRIVATE KEY &mdash; SAVE THIS &mdash; PASTE THIS TO LOG IN</label>
+          <div class="key-display priv-key-box" id="priv-key-display">Generating...</div>
+          <button class="copy-btn" id="copy-priv-btn">COPY PRIVATE KEY</button>
         </div>
         <div class="field-group field-group-rel">
-          <label class="field-label">Signing Public Key</label>
+          <label class="field-label pub-label">PUBLIC KEY &mdash; safe to share &mdash; do NOT paste this to log in</label>
           <div class="key-display" id="pub-key-display">Generating...</div>
-          <button class="copy-btn" id="copy-pub-btn">COPY</button>
+          <button class="copy-btn" id="copy-pub-btn">COPY PUBLIC KEY</button>
         </div>
         <div class="check-row">
           <input type="checkbox" id="confirm-saved">
@@ -65,7 +65,7 @@
       <div class="identity-preview hidden" id="identity-preview"></div>
       <div class="field-group">
         <label class="field-label" for="login-privkey">Signing Private Key (PKCS#8 PEM)</label>
-        <textarea class="field-input mono-sm" id="login-privkey" rows="5" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" spellcheck="false"></textarea>
+        <textarea class="field-input mono-sm" id="login-privkey" rows="5" placeholder="Paste your SIGNING PRIVATE KEY here&#10;-----BEGIN PRIVATE KEY-----&#10;MIG...&#10;-----END PRIVATE KEY-----&#10;(NOT the public key)" spellcheck="false"></textarea>
         <div class="field-hint">Your identity and DM key are re-derived from this.</div>
       </div>
       <div class="field-group">

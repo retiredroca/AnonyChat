@@ -79,23 +79,30 @@ async function generateSigningKeypair() {
 }
 
 async function importSigningPrivKey(pem) {
-  // Normalise: strip any extra whitespace/newlines that might survive copy-paste
   pem = pem.trim();
 
-  // Validate PEM envelope before touching crypto
+  // Detect wrong key type immediately
+  if (pem.includes('-----BEGIN PUBLIC KEY-----')) {
+    throw new Error('You pasted your PUBLIC key. You need to paste the PRIVATE key (labeled "Signing Private Key" during generation).');
+  }
+  if (pem.includes('-----BEGIN CERTIFICATE-----')) {
+    throw new Error('This is a certificate, not a private key.');
+  }
   if (!pem.includes('-----BEGIN') || !pem.includes('-----END')) {
-    throw new Error('Missing PEM header/footer. Copy the key exactly as shown including the -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY----- lines.');
+    throw new Error('Missing PEM header/footer lines. Paste the full key including -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY-----.');
+  }
+  if (!pem.includes('PRIVATE KEY')) {
+    throw new Error('This does not appear to be a private key PEM. Make sure you copied the "Signing Private Key" box, not the public key.');
   }
 
   let der;
   try {
     der = fromPem(pem);
   } catch (e) {
-    throw new Error('Could not decode PEM base64 — key may be corrupted or truncated. (' + e.message + ')');
+    throw new Error('Could not decode key — it may be corrupted or truncated during copy. (' + e.message + ')');
   }
 
   // Try every algorithm this app has ever generated — newest first.
-  // New keys are always P-384; legacy keys may be P-256 or RSA-PSS.
   const candidates = [
     { name: 'ECDSA', namedCurve: 'P-384' },
     { name: 'ECDSA', namedCurve: 'P-256' },
@@ -108,10 +115,17 @@ async function importSigningPrivKey(pem) {
       const pub = await deriveSigningPub(key, alg);
       return { privateKey: key, publicKey: pub, algorithm: alg };
     } catch (e) {
-      errors.push((alg.namedCurve || alg.name) + ': ' + (e.message || e));
+      errors.push((alg.namedCurve || alg.name) + ': ' + (e.message || String(e)));
     }
   }
-  throw new Error('Key not recognised as any supported algorithm. Tried: ' + errors.join(' | '));
+  // All algorithms failed — the most common cause is pasting the wrong key.
+  // Provide a concrete diagnostic.
+  throw new Error(
+    'Could not import key with any known algorithm. ' +
+    'Most likely cause: you copied the wrong key — make sure you are pasting the ' +
+    '"Signing Private Key" (-----BEGIN PRIVATE KEY-----), not the public key or DM key. ' +
+    'Technical detail: ' + errors.join(' | ')
+  );
 }
 
 async function deriveSigningPub(privateKey, alg) {

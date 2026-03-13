@@ -986,3 +986,19 @@ header {
   letter-spacing: 1px;
   margin-top: 4px;
 }
+
+/* ─── KEY DISPLAY DISTINCTION ─────────────────────── */
+.priv-label {
+  color: var(--amber) !important;
+  letter-spacing: 2px;
+}
+
+.priv-key-box {
+  border-color: var(--amber) !important;
+  box-shadow: 0 0 8px rgba(255,179,0,0.15);
+}
+
+.pub-label {
+  color: var(--text-faint);
+  letter-spacing: 1px;
+}
