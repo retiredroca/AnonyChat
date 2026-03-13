@@ -1,185 +1,214 @@
 'use strict';
 
 // ═══════════════════════════════════════════════════════
+// CRYPTO CONSTANTS — strongest settings throughout
+//   Signing:   ECDSA P-384 + SHA-384
+//   DM keys:   ECDH  P-384
+//   Symmetric: AES-256-GCM, 96-bit random IV
+//   KDF:       PBKDF2-SHA-384, 600 000 iterations (channels)
+//              PBKDF2-SHA-384, 300 000 iterations (DH key wrap)
+// ═══════════════════════════════════════════════════════
+const SIGN_ALG  = { name: 'ECDSA',  namedCurve: 'P-384' };
+const SIGN_USE  = { name: 'ECDSA',  hash: 'SHA-384' };
+const DH_ALG    = { name: 'ECDH',   namedCurve: 'P-384' };
+const AES_ALG   = { name: 'AES-GCM', length: 256 };
+const KDF_CHAN  = { name: 'PBKDF2', hash: 'SHA-384', iterations: 600_000 };
+const KDF_WRAP  = { name: 'PBKDF2', hash: 'SHA-384', iterations: 300_000 };
+
+// ═══════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════
 const state = {
-  me: null,            // { handle, publicKeyPem, signingKey, fingerprint, algo }
+  me: null,          // { handle, publicKeyPem, signingKey, fingerprint, dhPrivKey, dhPubKeyPem }
+  view: 'channel',   // 'channel' | 'dm'
   channel: 'general',
-  channelKeys: {},     // channel -> CryptoKey (AES-GCM, derived from passphrase)
-  generatedPrivPem:    null,
-  generatedPubPem:     null,
+  dmPeer: null,      // { handle, fingerprint, dhPubKeyPem }
+  channelKeys: {},   // channel  -> AES-GCM CryptoKey
+  dmKeys: {},        // fp       -> AES-GCM CryptoKey
+  pendingDmFp: null,
+  // transient keygen state
+  generatedPrivPem:  null,
+  generatedPubPem:   null,
   generatedCryptoKeys: null,
-  generatedAlgo:       null,
+  generatedDHKeys:   null,
+  generatedDHPubPem: null,
 };
 
 const CHANNEL_DESCS = {
-  general: 'AES-GCM encrypted · ECDSA signed · passphrase required to read',
-  random:  'AES-GCM encrypted · off-topic discussion',
-  tech:    'AES-GCM encrypted · technical talk',
+  general: 'AES-256-GCM · PBKDF2-SHA384 · ECDSA-P384 signed',
+  random:  'AES-256-GCM encrypted · shared passphrase',
+  tech:    'AES-256-GCM encrypted · shared passphrase',
 };
 
 // ═══════════════════════════════════════════════════════
-// CRYPTO — SIGNING (ECDSA / RSA-PSS)
+// PEM HELPERS
 // ═══════════════════════════════════════════════════════
 
-async function generateECDSA(namedCurve) {
-  return crypto.subtle.generateKey({ name: 'ECDSA', namedCurve }, true, ['sign', 'verify']);
+function toPem(buffer, label) {
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+  return `-----BEGIN ${label}-----\n${b64.match(/.{1,64}/g).join('\n')}\n-----END ${label}-----`;
 }
 
-async function generateRSAPSS() {
-  return crypto.subtle.generateKey(
-    { name: 'RSA-PSS', modulusLength: 2048, publicExponent: new Uint8Array([1,0,1]), hash: 'SHA-256' },
-    true, ['sign', 'verify']
-  );
+function fromPem(pem) {
+  const b64 = pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+  return Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer;
 }
 
 async function exportPrivPem(key) { return toPem(await crypto.subtle.exportKey('pkcs8', key), 'PRIVATE KEY'); }
 async function exportPubPem(key)  { return toPem(await crypto.subtle.exportKey('spki',  key), 'PUBLIC KEY'); }
 
-function toPem(buffer, label) {
-  const b64   = btoa(String.fromCharCode(...new Uint8Array(buffer)));
-  const lines = b64.match(/.{1,64}/g).join('\n');
-  return `-----BEGIN ${label}-----\n${lines}\n-----END ${label}-----`;
+// ═══════════════════════════════════════════════════════
+// SIGNING — ECDSA P-384 / SHA-384
+// ═══════════════════════════════════════════════════════
+
+async function generateSigningKeypair() {
+  return crypto.subtle.generateKey({ ...SIGN_ALG }, true, ['sign', 'verify']);
 }
 
-function fromPem(pem) {
-  const b64 = pem.replace(/-----[^-]+-----/g, '').replace(/\s/g, '');
-  return Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer;
+async function importSigningPrivKey(pem) {
+  const key = await crypto.subtle.importKey('pkcs8', fromPem(pem), SIGN_ALG, true, ['sign']);
+  const pub  = await deriveSigningPub(key);
+  return { privateKey: key, publicKey: pub };
 }
 
-async function importPrivateKey(pem) {
-  const der   = fromPem(pem);
-  const algos = [
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    { name: 'ECDSA', namedCurve: 'P-384' },
-    { name: 'RSA-PSS', hash: 'SHA-256' },
-  ];
-  for (const alg of algos) {
-    try {
-      const key = await crypto.subtle.importKey('pkcs8', der, alg, true, ['sign']);
-      const pub = await derivePublicFromPrivate(key, alg);
-      return { privateKey: key, publicKey: pub, algorithm: alg };
-    } catch { /* try next */ }
-  }
-  throw new Error('Unrecognised key format');
-}
-
-async function derivePublicFromPrivate(privateKey, alg) {
+async function deriveSigningPub(privateKey) {
   const jwk = await crypto.subtle.exportKey('jwk', privateKey);
   delete jwk.d;
-  const pubAlg = alg.name === 'ECDSA'
-    ? { name: 'ECDSA', namedCurve: alg.namedCurve }
-    : { name: 'RSA-PSS', hash: 'SHA-256' };
-  return crypto.subtle.importKey('jwk', jwk, pubAlg, true, ['verify']);
+  return crypto.subtle.importKey('jwk', jwk, SIGN_ALG, true, ['verify']);
 }
 
 async function fingerprint(pubKeyPem) {
-  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pubKeyPem));
-  return Array.from(new Uint8Array(hash)).slice(0, 8).map(b => b.toString(16).padStart(2,'0')).join('');
+  const hash = await crypto.subtle.digest('SHA-384', new TextEncoder().encode(pubKeyPem));
+  return Array.from(new Uint8Array(hash)).slice(0, 10).map(b => b.toString(16).padStart(2,'0')).join('');
 }
 
-async function signMessage(text, privateKey, alg) {
-  const enc    = new TextEncoder().encode(text);
-  const sigAlg = alg.name === 'ECDSA' ? { name: 'ECDSA', hash: 'SHA-256' } : { name: 'RSA-PSS', saltLength: 32 };
-  const sig    = await crypto.subtle.sign(sigAlg, privateKey, enc);
+async function signData(text, signingKey) {
+  const sig = await crypto.subtle.sign(SIGN_USE, signingKey, new TextEncoder().encode(text));
   return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
 
-async function verifyMessage(text, sigB64, pubKeyPem, alg) {
+async function verifyData(text, sigB64, pubKeyPem) {
   try {
-    const enc    = new TextEncoder().encode(text);
-    const sig    = Uint8Array.from(atob(sigB64), c => c.charCodeAt(0));
-    const pubAlg = alg.name === 'ECDSA' ? { name: 'ECDSA', namedCurve: alg.namedCurve } : { name: 'RSA-PSS', hash: 'SHA-256' };
-    const key    = await crypto.subtle.importKey('spki', fromPem(pubKeyPem), pubAlg, false, ['verify']);
-    const verAlg = alg.name === 'ECDSA' ? { name: 'ECDSA', hash: 'SHA-256' } : { name: 'RSA-PSS', saltLength: 32 };
-    return crypto.subtle.verify(verAlg, key, sig, enc);
+    const key = await crypto.subtle.importKey('spki', fromPem(pubKeyPem), SIGN_ALG, false, ['verify']);
+    return crypto.subtle.verify(SIGN_USE, key,
+      Uint8Array.from(atob(sigB64), c => c.charCodeAt(0)),
+      new TextEncoder().encode(text));
   } catch { return false; }
 }
 
 // ═══════════════════════════════════════════════════════
-// CRYPTO — ENCRYPTION (AES-256-GCM via PBKDF2)
+// ECDH P-384 — DM key exchange
 // ═══════════════════════════════════════════════════════
 
-// Derive an AES-GCM key from a passphrase.
-// Salt is deterministic per channel so all users with the same passphrase
-// derive the same key without needing a key exchange step.
-async function deriveChannelKey(passphrase, channel) {
-  const enc     = new TextEncoder();
-  const baseKey = await crypto.subtle.importKey(
-    'raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']
-  );
-  // Public, deterministic per-channel salt
-  const saltBuf = await crypto.subtle.digest('SHA-256', enc.encode('cipher-channel:' + channel));
+async function generateDHKeypair() {
+  return crypto.subtle.generateKey({ ...DH_ALG }, true, ['deriveKey']);
+}
+
+// Both parties independently derive the same AES-256-GCM key.
+async function deriveSharedDMKey(myDhPrivKey, theirDhPubKeyPem) {
+  const theirPub = await crypto.subtle.importKey('spki', fromPem(theirDhPubKeyPem), DH_ALG, false, []);
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: saltBuf, iterations: 200000, hash: 'SHA-256' },
-    baseKey,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
+    { name: 'ECDH', public: theirPub },
+    myDhPrivKey,
+    AES_ALG, false, ['encrypt', 'decrypt']
   );
 }
 
-// Encrypt plaintext -> base64(iv || ciphertext)
-async function encryptText(plaintext, aesKey) {
-  const iv         = crypto.getRandomValues(new Uint8Array(12));
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv }, aesKey, new TextEncoder().encode(plaintext)
-  );
-  const combined = new Uint8Array(12 + ciphertext.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(ciphertext), 12);
-  return btoa(String.fromCharCode(...combined));
+// Wrap the ECDH private key with AES-GCM so it can persist in localStorage
+// without being stored in cleartext. The wrapping key is derived deterministically
+// from the signing fingerprint using PBKDF2 — it is purely a local-at-rest
+// protection, not a password.
+async function persistDHPrivKey(dhPrivKey, fp) {
+  const wrapKey  = await derivePersistKey(fp);
+  const iv       = crypto.getRandomValues(new Uint8Array(12));
+  const raw      = await crypto.subtle.exportKey('pkcs8', dhPrivKey);
+  const wrapped  = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrapKey, raw);
+  const out      = new Uint8Array(12 + wrapped.byteLength);
+  out.set(iv, 0); out.set(new Uint8Array(wrapped), 12);
+  localStorage.setItem('cipher_dh_' + fp, btoa(String.fromCharCode(...out)));
 }
 
-// Decrypt base64(iv || ciphertext) -> plaintext string
-async function decryptText(b64, aesKey) {
-  const combined   = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  const plain      = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: combined.slice(0, 12) }, aesKey, combined.slice(12)
+async function loadDHPrivKey(fp) {
+  const stored = localStorage.getItem('cipher_dh_' + fp);
+  if (!stored) return null;
+  const buf     = Uint8Array.from(atob(stored), c => c.charCodeAt(0));
+  const wrapKey = await derivePersistKey(fp);
+  try {
+    const raw = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, wrapKey, buf.slice(12));
+    return crypto.subtle.importKey('pkcs8', raw, DH_ALG, true, ['deriveKey']);
+  } catch { return null; }
+}
+
+async function derivePersistKey(fp) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(fp), 'PBKDF2', false, ['deriveKey']);
+  const salt  = await crypto.subtle.digest('SHA-384', new TextEncoder().encode('cipher-dh-wrap:' + fp));
+  return crypto.subtle.deriveKey(
+    { ...KDF_WRAP, salt },
+    base, AES_ALG, false, ['encrypt', 'decrypt']
   );
+}
+
+async function deriveDHPubFromPriv(dhPrivKey) {
+  const jwk = await crypto.subtle.exportKey('jwk', dhPrivKey);
+  delete jwk.d;
+  return crypto.subtle.importKey('jwk', jwk, DH_ALG, true, []);
+}
+
+// ═══════════════════════════════════════════════════════
+// AES-256-GCM — symmetric encrypt / decrypt
+// ═══════════════════════════════════════════════════════
+
+async function aesEncrypt(plaintext, key) {
+  const iv  = crypto.getRandomValues(new Uint8Array(12));
+  const ct  = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext));
+  const out = new Uint8Array(12 + ct.byteLength);
+  out.set(iv, 0); out.set(new Uint8Array(ct), 12);
+  return btoa(String.fromCharCode(...out));
+}
+
+async function aesDecrypt(b64, key) {
+  const buf   = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, key, buf.slice(12));
   return new TextDecoder().decode(plain);
 }
 
 // ═══════════════════════════════════════════════════════
-// PASSPHRASE / CHANNEL KEY MANAGEMENT
+// PBKDF2 — channel passphrase → AES-256-GCM key
+// ═══════════════════════════════════════════════════════
+
+async function deriveChannelKey(passphrase, channel) {
+  const enc  = new TextEncoder();
+  const base = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  const salt = await crypto.subtle.digest('SHA-384', enc.encode('cipher-channel:' + channel));
+  return crypto.subtle.deriveKey({ ...KDF_CHAN, salt }, base, AES_ALG, false, ['encrypt', 'decrypt']);
+}
+
+// ═══════════════════════════════════════════════════════
+// CHANNEL PASSPHRASE UI
 // ═══════════════════════════════════════════════════════
 
 async function setChannelPassphrase() {
   const pass = $('channel-passphrase').value;
   if (!pass) { toast('Enter a passphrase first'); return; }
-
   const btn = $('btn-set-passphrase');
-  btn.textContent = '...';
-  btn.disabled    = true;
-
+  btn.textContent = '...'; btn.disabled = true;
   try {
-    const key = await deriveChannelKey(pass, state.channel);
-    state.channelKeys[state.channel] = key;
+    state.channelKeys[state.channel] = await deriveChannelKey(pass, state.channel);
     $('channel-passphrase').value = '';
     updateEncStatus(true);
     updateMsgInput();
     $('messages').innerHTML = '';
-    await loadChannelHistory(state.channel);
-    sysMsg('Channel key set. Messages encrypted with AES-256-GCM.');
-    toast('Channel key active');
-  } catch (e) {
-    toast('Key derivation failed: ' + e.message);
-  }
-
-  btn.textContent = 'SET KEY';
-  btn.disabled    = false;
+    await loadHistory();
+    sysMsg('Channel key active — AES-256-GCM / PBKDF2-SHA384 / 600k iterations.');
+    toast('Channel key set');
+  } catch (e) { toast('Key derivation failed: ' + e.message); }
+  btn.textContent = 'SET KEY'; btn.disabled = false;
 }
 
 function updateEncStatus(active) {
   const el = $('enc-status');
-  if (active) {
-    el.textContent = 'AES-256 ACTIVE';
-    el.classList.add('active');
-  } else {
-    el.textContent = 'NO KEY SET';
-    el.classList.remove('active');
-  }
+  el.textContent = active ? 'AES-256 ACTIVE' : 'NO KEY SET';
+  el.classList.toggle('active', active);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -188,61 +217,50 @@ function updateEncStatus(active) {
 
 async function generateKeys() {
   const username = $('reg-username').value.trim();
-  if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) {
-    toast('Handle must be 3-32 chars: letters, numbers, underscores');
-    return;
-  }
+  if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) { toast('Handle: 3–32 chars, letters/numbers/underscores'); return; }
 
-  const algo = $('reg-algo').value;
-  const btn  = $('btn-gen');
-  btn.disabled  = true;
-  btn.innerHTML = '<span class="spinner"></span>GENERATING...';
-
+  const btn = $('btn-gen');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>GENERATING...';
   $('key-gen-area').classList.remove('hidden');
-  animateProgress(0, 40, 600);
+  animateProgress(0, 30, 500);
 
-  let keys;
+  let sigKeys, dhKeys;
   try {
-    if      (algo === 'ECDSA-P256') keys = await generateECDSA('P-256');
-    else if (algo === 'ECDSA-P384') keys = await generateECDSA('P-384');
-    else                            keys = await generateRSAPSS();
+    sigKeys = await generateSigningKeypair();
+    animateProgress(30, 60, 400);
+    dhKeys  = await generateDHKeypair();
+    animateProgress(60, 90, 300);
   } catch (e) {
     toast('Key generation failed: ' + e.message);
-    btn.disabled  = false;
-    btn.innerHTML = 'GENERATE KEYPAIR';
-    return;
+    btn.disabled = false; btn.innerHTML = 'GENERATE KEYPAIR'; return;
   }
 
-  animateProgress(40, 80, 400);
-  const privPem = await exportPrivPem(keys.privateKey);
-  const pubPem  = await exportPubPem(keys.publicKey);
-  animateProgress(80, 100, 300);
+  const privPem  = await exportPrivPem(sigKeys.privateKey);
+  const pubPem   = await exportPubPem(sigKeys.publicKey);
+  const dhPubPem = await exportPubPem(dhKeys.publicKey);
+  animateProgress(90, 100, 200);
 
   state.generatedPrivPem    = privPem;
   state.generatedPubPem     = pubPem;
-  state.generatedCryptoKeys = keys;
-  state.generatedAlgo = algo.startsWith('ECDSA')
-    ? { name: 'ECDSA', namedCurve: algo === 'ECDSA-P256' ? 'P-256' : 'P-384' }
-    : { name: 'RSA-PSS', hash: 'SHA-256' };
+  state.generatedCryptoKeys = sigKeys;
+  state.generatedDHKeys     = dhKeys;
+  state.generatedDHPubPem   = dhPubPem;
 
   $('priv-key-display').textContent = privPem;
   $('pub-key-display').textContent  = pubPem;
 
   btn.classList.add('hidden');
-  const activateBtn = $('btn-activate');
-  activateBtn.classList.remove('hidden');
-  activateBtn.disabled = true;
-
-  $('confirm-saved').addEventListener('change', function handler() {
-    activateBtn.disabled = !this.checked;
-    if (this.checked) this.removeEventListener('change', handler);
+  const act = $('btn-activate');
+  act.classList.remove('hidden'); act.disabled = true;
+  $('confirm-saved').addEventListener('change', function h() {
+    act.disabled = !this.checked;
+    if (this.checked) this.removeEventListener('change', h);
   });
 }
 
 function animateProgress(from, to, ms) {
-  const fill  = $('gen-progress');
-  const start = Date.now();
-  const tick  = () => {
+  const fill = $('gen-progress'), start = Date.now();
+  const tick = () => {
     const t = Math.min(1, (Date.now() - start) / ms);
     fill.style.width = (from + (to - from) * t) + '%';
     if (t < 1) requestAnimationFrame(tick);
@@ -254,10 +272,13 @@ async function activateAccount() {
   const username = $('reg-username').value.trim();
   const fp       = await fingerprint(state.generatedPubPem);
 
+  await persistDHPrivKey(state.generatedDHKeys.privateKey, fp);
+
   const users = getStoredUsers();
   users[fp]   = {
     handle: username, publicKeyPem: state.generatedPubPem,
-    fingerprint: fp, algo: state.generatedAlgo, registeredAt: Date.now(),
+    fingerprint: fp, dhPubKeyPem: state.generatedDHPubPem,
+    registeredAt: Date.now(),
   };
   localStorage.setItem('cipher_users', JSON.stringify(users));
   localStorage.setItem('cipher_my_fingerprint', fp);
@@ -265,11 +286,15 @@ async function activateAccount() {
   state.me = {
     handle: username, publicKeyPem: state.generatedPubPem,
     signingKey: state.generatedCryptoKeys.privateKey,
-    fingerprint: fp, algo: state.generatedAlgo,
+    fingerprint: fp,
+    dhPrivKey: state.generatedDHKeys.privateKey,
+    dhPubKeyPem: state.generatedDHPubPem,
   };
 
+  // Scrub transient keygen data
   state.generatedPrivPem    = null;
   state.generatedCryptoKeys = null;
+  state.generatedDHKeys     = null;
 
   enterApp();
   sysMsg(username + ' joined the network.');
@@ -281,40 +306,52 @@ async function activateAccount() {
 // ═══════════════════════════════════════════════════════
 
 async function importKey() {
-  const privPem          = $('login-privkey').value.trim();
-  const usernameOverride = $('login-username').value.trim();
+  const privPem       = $('login-privkey').value.trim();
+  const handleOverride = $('login-username').value.trim();
   hideLoginError();
-
-  if (!privPem) { showLoginError('Paste your private key.'); return; }
+  if (!privPem) { showLoginError('Paste your private signing key (PKCS#8 PEM).'); return; }
 
   const btn = $('btn-import');
-  btn.textContent = 'VERIFYING...';
-  btn.disabled    = true;
+  btn.textContent = 'VERIFYING...'; btn.disabled = true;
 
-  let keyData;
+  let sigKeys;
   try {
-    keyData = await importPrivateKey(privPem);
+    sigKeys = await importSigningPrivKey(privPem);
   } catch (e) {
-    showLoginError('Could not parse key: ' + e.message);
-    btn.textContent = 'IMPORT AND ENTER';
-    btn.disabled    = false;
-    return;
+    showLoginError('Key parse error: ' + e.message + '. Ensure you are pasting the full ECDSA P-384 PKCS#8 PEM including header/footer lines.');
+    btn.textContent = 'IMPORT AND ENTER'; btn.disabled = false; return;
   }
 
-  const pubPem = await exportPubPem(keyData.publicKey);
+  const pubPem = await exportPubPem(sigKeys.publicKey);
   const fp     = await fingerprint(pubPem);
   const users  = getStoredUsers();
-  const handle = usernameOverride || (users[fp] && users[fp].handle) || 'user_' + fp.slice(0, 6);
+  const handle = handleOverride || (users[fp] && users[fp].handle) || 'user_' + fp.slice(0, 6);
 
-  users[fp] = { handle, publicKeyPem: pubPem, fingerprint: fp, algo: keyData.algorithm };
+  // Load existing ECDH key from localStorage, or generate a fresh one
+  let dhPrivKey, dhPubKeyPem;
+  const stored = await loadDHPrivKey(fp);
+  if (stored) {
+    dhPrivKey   = stored;
+    dhPubKeyPem = await exportPubPem(await deriveDHPubFromPriv(dhPrivKey));
+  } else {
+    const dhKeys = await generateDHKeypair();
+    dhPrivKey    = dhKeys.privateKey;
+    dhPubKeyPem  = await exportPubPem(dhKeys.publicKey);
+    await persistDHPrivKey(dhPrivKey, fp);
+  }
+
+  // Preserve any existing dhPubKeyPem in user record if we already had one stored
+  const existingUser = users[fp] || {};
+  users[fp] = {
+    ...existingUser,
+    handle, publicKeyPem: pubPem, fingerprint: fp, dhPubKeyPem,
+  };
   localStorage.setItem('cipher_users', JSON.stringify(users));
   localStorage.setItem('cipher_my_fingerprint', fp);
 
-  state.me = { handle, publicKeyPem: pubPem, signingKey: keyData.privateKey, fingerprint: fp, algo: keyData.algorithm };
+  state.me = { handle, publicKeyPem: pubPem, signingKey: sigKeys.privateKey, fingerprint: fp, dhPrivKey, dhPubKeyPem };
 
-  btn.textContent = 'IMPORT AND ENTER';
-  btn.disabled    = false;
-
+  btn.textContent = 'IMPORT AND ENTER'; btn.disabled = false;
   enterApp();
   sysMsg(handle + ' connected.');
   toast('Signed in as ' + handle);
@@ -322,10 +359,9 @@ async function importKey() {
 
 function showLoginError(msg) {
   const el = $('login-error');
-  el.textContent = '// ERROR: ' + msg;
+  el.textContent = msg;
   el.classList.remove('hidden');
 }
-
 function hideLoginError() { $('login-error').classList.add('hidden'); }
 
 // ═══════════════════════════════════════════════════════
@@ -346,117 +382,228 @@ function switchLockTab(tab) {
 }
 
 // ═══════════════════════════════════════════════════════
+// DIRECT MESSAGES
+// ═══════════════════════════════════════════════════════
+
+async function openDM(fp) {
+  if (fp === state.me.fingerprint) { toast('Cannot DM yourself'); return; }
+  const users = getStoredUsers();
+  const peer  = users[fp];
+  if (!peer) { toast('User not found in local registry'); return; }
+
+  // Already have a shared key for this peer
+  if (state.dmKeys[fp]) { activateDMView(peer); return; }
+
+  // Peer's DH public key is known — derive shared key silently
+  if (peer.dhPubKeyPem) {
+    try {
+      state.dmKeys[fp] = await deriveSharedDMKey(state.me.dhPrivKey, peer.dhPubKeyPem);
+      activateDMView(peer); return;
+    } catch (e) { toast('DM key derivation failed: ' + e.message); return; }
+  }
+
+  // Need to ask for peer's DH public key
+  state.pendingDmFp = fp;
+  $('dm-modal-error').classList.add('hidden');
+  $('dm-pubkey-input').value = '';
+  $('dm-key-modal').classList.remove('hidden');
+}
+
+async function confirmDMKeyExchange() {
+  const pem = $('dm-pubkey-input').value.trim();
+  const fp  = state.pendingDmFp;
+  if (!pem) { showDMModalError('Paste the recipient DM public key (SPKI PEM).'); return; }
+
+  const btn = $('dm-modal-confirm');
+  btn.textContent = 'DERIVING KEY...'; btn.disabled = true;
+
+  try {
+    state.dmKeys[fp] = await deriveSharedDMKey(state.me.dhPrivKey, pem);
+
+    // Cache their DH pub key for future sessions
+    const users = getStoredUsers();
+    if (users[fp]) { users[fp].dhPubKeyPem = pem; localStorage.setItem('cipher_users', JSON.stringify(users)); }
+
+    closeDMModal();
+    const peer = getStoredUsers()[fp];
+    if (peer) activateDMView(peer);
+    toast('DM key established — ECDH P-384');
+  } catch (e) {
+    showDMModalError('Key derivation failed: ' + e.message);
+  }
+
+  btn.textContent = 'START ENCRYPTED DM'; btn.disabled = false;
+}
+
+function activateDMView(peer) {
+  state.view    = 'dm';
+  state.dmPeer  = peer;
+  state.channel = 'dm:' + peer.fingerprint;
+
+  document.querySelectorAll('.channel-item, .dm-item').forEach(el => el.classList.remove('active'));
+
+  let dmItem = document.querySelector('.dm-item[data-fp="' + peer.fingerprint + '"]');
+  if (!dmItem) dmItem = addDMSidebarItem(peer);
+  dmItem.classList.add('active');
+
+  $('channel-title').textContent = '@' + peer.handle;
+  $('channel-desc').textContent  = 'ECDH P-384 end-to-end encrypted direct message';
+  $('passphrase-wrap').classList.add('hidden');
+  $('dm-header-info').classList.remove('hidden');
+  $('dm-fp').textContent = 'fp:' + peer.fingerprint.slice(0, 12);
+
+  $('messages').innerHTML = '';
+  updateMsgInput();
+  loadHistory();
+}
+
+function addDMSidebarItem(peer) {
+  const list  = $('dm-list');
+  const empty = list.querySelector('.dm-empty');
+  if (empty) empty.remove();
+
+  const div = document.createElement('div');
+  div.className  = 'dm-item';
+  div.dataset.fp = peer.fingerprint;
+  div.innerHTML  = '<span class="dm-icon">@</span>' + escHtml(peer.handle) +
+                   '<span class="user-fp">' + peer.fingerprint.slice(0,6) + '</span>';
+  div.addEventListener('click', () => openDM(peer.fingerprint));
+  list.appendChild(div);
+  return div;
+}
+
+function showDMModalError(msg) { const el = $('dm-modal-error'); el.textContent = msg; el.classList.remove('hidden'); }
+function closeDMModal() { $('dm-key-modal').classList.add('hidden'); state.pendingDmFp = null; }
+
+// ═══════════════════════════════════════════════════════
 // MESSAGING
 // ═══════════════════════════════════════════════════════
 
 async function sendMessage() {
   if (!state.me) return;
+  const text = $('msg-input').value.trim();
+  if (!text) return;
+  $('msg-input').value = '';
+  if (state.view === 'dm') await sendDM(text);
+  else                     await sendChannelMessage(text);
+}
+
+async function sendChannelMessage(text) {
   const aesKey = state.channelKeys[state.channel];
   if (!aesKey) { toast('Set a channel passphrase first'); return; }
 
-  const input = $('msg-input');
-  const text  = input.value.trim();
-  if (!text) return;
-  input.value = '';
-
-  const ts = Date.now();
-
-  // Sign the plaintext so recipients can verify authorship after decryption
+  const ts         = Date.now();
   const sigPayload = JSON.stringify({ text, channel: state.channel, author: state.me.fingerprint, ts });
-  const sig        = await signMessage(sigPayload, state.me.signingKey, state.me.algo);
-
-  // Build plaintext envelope with all metadata, then encrypt it entirely
-  const plainEnvelope = JSON.stringify({
+  const sig        = await signData(sigPayload, state.me.signingKey);
+  const envelope   = JSON.stringify({
     text, sig, sigPayload,
-    author: state.me.fingerprint,
-    handle: state.me.handle,
-    publicKeyPem: state.me.publicKeyPem,
-    algo: state.me.algo,
-    ts,
+    author: state.me.fingerprint, handle: state.me.handle,
+    publicKeyPem: state.me.publicKeyPem, ts,
   });
-  const ciphertext = await encryptText(plainEnvelope, aesKey);
+  const ciphertext = await aesEncrypt(envelope, aesKey);
 
-  // Only the author hint (first 6 chars of fingerprint) is stored in plaintext
-  // so the UI can show a placeholder for locked messages without revealing content
-  persistMessage({ ciphertext, channel: state.channel, ts, authorHint: state.me.fingerprint.slice(0, 6) });
-
-  renderMessage({
-    text, author: state.me.handle, fingerprint: state.me.fingerprint,
-    ts, verified: true, encrypted: true, decrypted: true,
-  });
+  persist('cipher_msgs_' + state.channel, { ciphertext, ts, authorHint: state.me.fingerprint.slice(0, 6) });
+  renderMessage({ text, author: state.me.handle, fingerprint: state.me.fingerprint, ts, verified: true, enc: 'AES-256-GCM' });
   scrollToBottom();
 }
 
-function persistMessage(stored) {
+async function sendDM(text) {
+  const fp    = state.dmPeer.fingerprint;
+  const dmKey = state.dmKeys[fp];
+  if (!dmKey) { toast('DM key not established'); return; }
+
+  const ts         = Date.now();
+  const sigPayload = JSON.stringify({ text, dm: true, to: fp, from: state.me.fingerprint, ts });
+  const sig        = await signData(sigPayload, state.me.signingKey);
+  const envelope   = JSON.stringify({
+    text, sig, sigPayload,
+    from: state.me.fingerprint, handle: state.me.handle,
+    publicKeyPem: state.me.publicKeyPem, ts,
+  });
+  const ciphertext = await aesEncrypt(envelope, dmKey);
+
+  persist(dmStorageKey(state.me.fingerprint, fp), { ciphertext, ts, authorHint: state.me.fingerprint.slice(0, 6) });
+  renderMessage({ text, author: state.me.handle, fingerprint: state.me.fingerprint, ts, verified: true, enc: 'ECDH-P384+AES', dm: true });
+  scrollToBottom();
+}
+
+function dmStorageKey(a, b) { return 'cipher_dm_' + [a, b].sort().join('_'); }
+
+function persist(key, entry) {
   try {
-    const key = 'cipher_msgs_' + stored.channel;
     const arr = JSON.parse(localStorage.getItem(key) || '[]');
-    arr.push(stored);
+    arr.push(entry);
     if (arr.length > 200) arr.splice(0, arr.length - 200);
     localStorage.setItem(key, JSON.stringify(arr));
   } catch { /* storage full */ }
 }
 
+async function loadHistory() {
+  if (state.view === 'dm') await loadDMHistory(state.dmPeer.fingerprint);
+  else                     await loadChannelHistory(state.channel);
+}
+
 async function loadChannelHistory(channel) {
   const aesKey = state.channelKeys[channel];
   const stored = JSON.parse(localStorage.getItem('cipher_msgs_' + channel) || '[]');
-
   for (const entry of stored) {
-    if (!aesKey) {
-      renderLockedMessage(entry.ts, entry.authorHint, false);
-      continue;
-    }
+    if (!aesKey) { renderLocked(entry.ts, entry.authorHint, false); continue; }
     try {
-      const plain    = await decryptText(entry.ciphertext, aesKey);
-      const env      = JSON.parse(plain);
-      const verified = await verifyMessage(env.sigPayload, env.sig, env.publicKeyPem, env.algo);
-      renderMessage({
-        text: env.text, author: env.handle, fingerprint: env.fingerprint,
-        ts: env.ts, verified, encrypted: true, decrypted: true,
-      });
-    } catch {
-      renderLockedMessage(entry.ts, entry.authorHint, true);
-    }
+      const env      = JSON.parse(await aesDecrypt(entry.ciphertext, aesKey));
+      const verified = await verifyData(env.sigPayload, env.sig, env.publicKeyPem);
+      renderMessage({ text: env.text, author: env.handle, fingerprint: env.author, ts: env.ts, verified, enc: 'AES-256-GCM' });
+    } catch { renderLocked(entry.ts, entry.authorHint, true); }
   }
   scrollToBottom();
 }
 
+async function loadDMHistory(peerFp) {
+  const dmKey  = state.dmKeys[peerFp];
+  const stored = JSON.parse(localStorage.getItem(dmStorageKey(state.me.fingerprint, peerFp)) || '[]');
+  for (const entry of stored) {
+    if (!dmKey) { renderLocked(entry.ts, entry.authorHint, false); continue; }
+    try {
+      const env      = JSON.parse(await aesDecrypt(entry.ciphertext, dmKey));
+      const verified = await verifyData(env.sigPayload, env.sig, env.publicKeyPem);
+      renderMessage({ text: env.text, author: env.handle, fingerprint: env.from, ts: env.ts, verified, enc: 'ECDH-P384+AES', dm: true });
+    } catch { renderLocked(entry.ts, entry.authorHint, true); }
+  }
+  scrollToBottom();
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════
+
 function renderMessage(msg) {
   const isMe = state.me && msg.fingerprint === state.me.fingerprint;
-  const time = new Date(msg.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-  const div  = document.createElement('div');
-  div.className = 'msg';
-
-  const meta = document.createElement('div');
-  meta.className = 'msg-meta';
+  const div  = document.createElement('div'); div.className = 'msg';
+  const meta = document.createElement('div'); meta.className = 'msg-meta';
 
   const author = document.createElement('span');
   author.className   = 'msg-author' + (isMe ? ' me' : '') + (msg.system ? ' system' : '');
-  author.title       = msg.fingerprint ? 'Fingerprint: ' + msg.fingerprint : '';
+  author.title       = msg.fingerprint ? 'fp: ' + msg.fingerprint : '';
   author.textContent = msg.author;
   meta.appendChild(author);
 
   const timeEl = document.createElement('span');
   timeEl.className   = 'msg-time';
-  timeEl.textContent = time;
+  timeEl.textContent = new Date(msg.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   meta.appendChild(timeEl);
 
   if (!msg.system && msg.verified !== undefined) {
-    const sigEl = document.createElement('span');
-    sigEl.className = 'msg-sig';
-    const icon = document.createElement('span');
-    icon.className   = 'verified-icon';
+    const sigEl  = document.createElement('span'); sigEl.className = 'msg-sig';
+    const icon   = document.createElement('span'); icon.className = 'verified-icon';
     icon.textContent = msg.verified ? '✓' : '✗';
     sigEl.appendChild(icon);
     sigEl.appendChild(document.createTextNode(msg.verified ? 'SIGNED' : 'INVALID'));
     meta.appendChild(sigEl);
   }
 
-  if (msg.encrypted) {
+  if (msg.enc) {
     const encEl = document.createElement('div');
-    encEl.className   = 'msg-enc';
-    encEl.textContent = 'AES-256-GCM';
+    encEl.className   = msg.dm ? 'msg-dm-badge' : 'msg-enc';
+    encEl.textContent = msg.enc;
     meta.appendChild(encEl);
   }
 
@@ -464,42 +611,24 @@ function renderMessage(msg) {
   body.className   = 'msg-body' + (msg.system ? ' system' : '');
   body.textContent = msg.text;
 
-  div.appendChild(meta);
-  div.appendChild(body);
+  div.appendChild(meta); div.appendChild(body);
   $('messages').appendChild(div);
 }
 
-function renderLockedMessage(ts, authorHint, wrongKey) {
-  const time = new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const div  = document.createElement('div');
-  div.className = 'msg';
-
-  const meta = document.createElement('div');
-  meta.className = 'msg-meta';
-
-  const author = document.createElement('span');
-  author.className   = 'msg-author system';
-  author.textContent = authorHint ? '...' + authorHint : '??????';
-  meta.appendChild(author);
-
-  const timeEl = document.createElement('span');
-  timeEl.className = 'msg-time';
-  timeEl.textContent = time;
-  meta.appendChild(timeEl);
-
-  const encEl = document.createElement('div');
-  encEl.className   = 'msg-enc' + (wrongKey ? ' failed' : '');
-  encEl.textContent = wrongKey ? 'WRONG KEY' : 'LOCKED';
-  meta.appendChild(encEl);
-
-  const body = document.createElement('div');
-  body.className   = 'msg-body system';
-  body.textContent = wrongKey
-    ? '[decryption failed - wrong passphrase]'
-    : '[encrypted - set channel passphrase to read]';
-
-  div.appendChild(meta);
-  div.appendChild(body);
+function renderLocked(ts, hint, wrongKey) {
+  const div  = document.createElement('div'); div.className = 'msg';
+  const meta = document.createElement('div'); meta.className = 'msg-meta';
+  const a    = document.createElement('span'); a.className = 'msg-author system';
+  a.textContent = hint ? '...' + hint : '??????';
+  const t = document.createElement('span'); t.className = 'msg-time';
+  t.textContent = new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const e = document.createElement('div');
+  e.className   = 'msg-enc' + (wrongKey ? ' failed' : '');
+  e.textContent = wrongKey ? 'WRONG KEY' : 'LOCKED';
+  meta.appendChild(a); meta.appendChild(t); meta.appendChild(e);
+  const body = document.createElement('div'); body.className = 'msg-body system';
+  body.textContent = wrongKey ? '[decryption failed — wrong passphrase or key]' : '[encrypted — key required to read]';
+  div.appendChild(meta); div.appendChild(body);
   $('messages').appendChild(div);
 }
 
@@ -508,10 +637,7 @@ function sysMsg(text) {
   scrollToBottom();
 }
 
-function scrollToBottom() {
-  const m = $('messages');
-  m.scrollTop = m.scrollHeight;
-}
+function scrollToBottom() { const m = $('messages'); m.scrollTop = m.scrollHeight; }
 
 // ═══════════════════════════════════════════════════════
 // IDENTITY EXPORT / IMPORT
@@ -520,11 +646,12 @@ function scrollToBottom() {
 function exportIdentity() {
   if (!state.me) { toast('Sign in first'); return; }
   downloadJSON({
-    cipher_version: 1, type: 'public_identity',
+    cipher_version: 2, type: 'public_identity',
     handle: state.me.handle, fingerprint: state.me.fingerprint,
-    publicKeyPem: state.me.publicKeyPem, algo: state.me.algo,
+    publicKeyPem: state.me.publicKeyPem,
+    dhPubKeyPem:  state.me.dhPubKeyPem,
     exportedAt: new Date().toISOString(),
-    note: 'Public key only. Safe to share. Keep your private key secret.',
+    note: 'Public keys only. Safe to share. Includes ECDH P-384 DM key.',
   }, 'cipher-identity-' + state.me.handle + '.json');
   toast('Public identity exported');
 }
@@ -536,11 +663,17 @@ function exportFullBackup() {
     try { acc[ch] = JSON.parse(localStorage.getItem('cipher_msgs_' + ch) || '[]'); } catch {}
     return acc;
   }, {});
+  const dms = {};
+  Object.keys(users).forEach(fp => {
+    if (fp === state.me.fingerprint) return;
+    const raw = localStorage.getItem(dmStorageKey(state.me.fingerprint, fp));
+    if (raw) dms[fp] = JSON.parse(raw);
+  });
   downloadJSON({
-    cipher_version: 1, type: 'full_backup',
+    cipher_version: 2, type: 'full_backup',
     myFingerprint: state.me.fingerprint,
-    exportedAt: new Date().toISOString(), users, channels,
-    note: 'Encrypted ciphertext + public keys only. Private key NOT included.',
+    exportedAt: new Date().toISOString(), users, channels, dms,
+    note: 'Encrypted ciphertext + public keys only. Private signing key NOT included. Paste it on import.',
   }, 'cipher-backup-' + state.me.handle + '-' + Date.now() + '.json');
   toast('Full backup exported');
 }
@@ -552,63 +685,80 @@ function downloadJSON(data, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// ── Drag/drop identity file ──
+
 function handleDragOver(e)  { e.preventDefault(); $('drop-zone').classList.add('drag-over'); }
 function handleDragLeave()  { $('drop-zone').classList.remove('drag-over'); }
 function handleDrop(e) {
-  e.preventDefault();
-  $('drop-zone').classList.remove('drag-over');
+  e.preventDefault(); $('drop-zone').classList.remove('drag-over');
   if (e.dataTransfer.files[0]) readIdentityFile(e.dataTransfer.files[0]);
 }
 
 function readIdentityFile(file) {
-  const reader = new FileReader();
-  reader.onload = e => {
-    try   { applyIdentityFile(JSON.parse(e.target.result)); }
-    catch { showLoginError('Could not parse file - expected JSON.'); }
+  const r = new FileReader();
+  r.onload = e => {
+    try { applyIdentityFile(JSON.parse(e.target.result)); }
+    catch { showLoginError('Invalid file — expected JSON.'); }
   };
-  reader.readAsText(file);
+  r.readAsText(file);
 }
 
 function applyIdentityFile(data) {
-  if (!data.cipher_version) { showLoginError('Not a CIPHER//NET identity file.'); return; }
+  if (!data.cipher_version) { showLoginError('Not a CIPHER//NET file.'); return; }
+
+  // Always ensure the import tab is visible when loading a file
+  switchLockTab('login');
+
   if (data.type === 'full_backup') {
     if (data.users)
       localStorage.setItem('cipher_users', JSON.stringify({ ...getStoredUsers(), ...data.users }));
-    if (data.channels) {
+    if (data.channels)
       for (const [ch, msgs] of Object.entries(data.channels))
         if (Array.isArray(msgs) && msgs.length)
           localStorage.setItem('cipher_msgs_' + ch, JSON.stringify(msgs));
-    }
-    toast('Backup restored - paste your private key to sign in');
-    if (data.myFingerprint && data.users && data.users[data.myFingerprint])
-      $('login-username').value = data.users[data.myFingerprint].handle;
+    if (data.dms)
+      for (const [fp, msgs] of Object.entries(data.dms)) {
+        const key = dmStorageKey(data.myFingerprint, fp);
+        if (Array.isArray(msgs) && msgs.length)
+          localStorage.setItem(key, JSON.stringify(msgs));
+      }
+
+    const handle = data.myFingerprint && data.users?.[data.myFingerprint]?.handle;
+    if (handle) $('login-username').value = handle;
+
     showIdentityPreview({ type: 'full_backup', userCount: Object.keys(data.users || {}).length });
+    toast('Backup restored — paste your private signing key below');
     return;
   }
+
+  // public_identity file
   if (data.handle) $('login-username').value = data.handle;
   if (data.fingerprint && data.publicKeyPem) {
     const users = getStoredUsers();
     users[data.fingerprint] = {
       handle: data.handle, publicKeyPem: data.publicKeyPem,
-      fingerprint: data.fingerprint, algo: data.algo,
+      fingerprint: data.fingerprint, dhPubKeyPem: data.dhPubKeyPem || null,
     };
     localStorage.setItem('cipher_users', JSON.stringify(users));
   }
   showIdentityPreview(data);
-  toast('Identity file loaded - paste your private key to sign in');
+  toast('Identity loaded — paste your private key below');
 }
 
 function showIdentityPreview(data) {
   const el = $('identity-preview');
-  el.classList.remove('hidden');
-  el.innerHTML = '';
-  const label = document.createElement('div');
-  label.className   = 'ip-label';
-  label.textContent = data.type === 'full_backup' ? '// FULL BACKUP LOADED' : '// IDENTITY FILE LOADED';
-  el.appendChild(label);
+  el.classList.remove('hidden'); el.innerHTML = '';
+  const lbl = document.createElement('div'); lbl.className = 'ip-label';
+  lbl.textContent = data.type === 'full_backup' ? '// BACKUP RESTORED' : '// IDENTITY FILE LOADED';
+  el.appendChild(lbl);
   const lines = data.type === 'full_backup'
-    ? [data.userCount + ' user(s) restored. Paste your private key below.']
-    : ['Handle: ' + (data.handle || '?'), 'Fingerprint: ' + (data.fingerprint || '?'), 'Paste your private key below.'];
+    ? [data.userCount + ' user(s) restored. Paste your private signing key below to continue.']
+    : [
+        'Handle:      ' + (data.handle || '?'),
+        'Fingerprint: ' + (data.fingerprint || '?'),
+        'DM key:      ' + (data.dhPubKeyPem ? 'present' : 'not in file'),
+        'Paste your private signing key below.',
+      ];
   lines.forEach(t => { const d = document.createElement('div'); d.textContent = t; el.appendChild(d); });
 }
 
@@ -616,28 +766,37 @@ function showStorageWarning() {
   if (sessionStorage.getItem('cipher_warn_dismissed')) return;
   $('storage-warning').classList.remove('hidden');
 }
-
 function dismissStorageWarning() {
   $('storage-warning').classList.add('hidden');
   sessionStorage.setItem('cipher_warn_dismissed', '1');
 }
 
 // ═══════════════════════════════════════════════════════
-// CHANNEL & USER MANAGEMENT
+// CHANNEL SWITCHING
 // ═══════════════════════════════════════════════════════
 
 function switchChannel(ch) {
+  state.view   = 'channel';
   state.channel = ch;
-  document.querySelectorAll('.channel-item').forEach(el =>
-    el.classList.toggle('active', el.dataset.channel === ch)
-  );
+  state.dmPeer  = null;
+
+  document.querySelectorAll('.channel-item, .dm-item').forEach(el => el.classList.remove('active'));
+  document.querySelector('.channel-item[data-channel="' + ch + '"]').classList.add('active');
+
   $('channel-title').textContent = '# ' + ch;
   $('channel-desc').textContent  = CHANNEL_DESCS[ch] || '';
-  $('messages').innerHTML = '';
+  $('passphrase-wrap').classList.remove('hidden');
+  $('dm-header-info').classList.add('hidden');
+
   updateEncStatus(!!state.channelKeys[ch]);
+  $('messages').innerHTML = '';
   updateMsgInput();
   loadChannelHistory(ch);
 }
+
+// ═══════════════════════════════════════════════════════
+// AUTH / USER MANAGEMENT
+// ═══════════════════════════════════════════════════════
 
 function onAuthenticated() {
   updateMsgInput();
@@ -651,27 +810,35 @@ function onAuthenticated() {
 }
 
 function updateMsgInput() {
-  const hasKey = !!state.channelKeys[state.channel];
-  $('msg-input').disabled    = !hasKey;
-  $('btn-send').disabled     = !hasKey;
-  $('msg-input').placeholder = hasKey
-    ? 'Message #' + state.channel + ' (AES-256-GCM encrypted + ECDSA signed)'
-    : 'Set a channel passphrase to send messages...';
-  $('input-hint').textContent = hasKey
-    ? '> ' + state.me.handle.toUpperCase() + ' · AES-256-GCM ENCRYPTED · ECDSA SIGNED · fp:' + state.me.fingerprint
-    : '> SET A CHANNEL PASSPHRASE — all messages are encrypted at rest, only users with the passphrase can read them';
+  let enabled, hint, placeholder;
+  if (state.view === 'dm') {
+    const hasDmKey = state.dmPeer && !!state.dmKeys[state.dmPeer.fingerprint];
+    enabled     = hasDmKey;
+    placeholder = hasDmKey ? 'DM @' + state.dmPeer.handle + ' (ECDH P-384 encrypted)...' : 'Establishing DM key...';
+    hint        = hasDmKey
+      ? '> ECDH-P384 · AES-256-GCM · ECDSA-P384 SIGNED · to:' + state.dmPeer.handle
+      : '> DM KEY NOT YET ESTABLISHED';
+  } else {
+    const hasKey = !!state.channelKeys[state.channel];
+    enabled     = hasKey;
+    placeholder = hasKey ? 'Message #' + state.channel + ' (AES-256-GCM encrypted)...' : 'Set a channel passphrase to send...';
+    hint        = hasKey
+      ? '> ' + state.me.handle.toUpperCase() + ' · AES-256-GCM · ECDSA-P384 SIGNED · fp:' + state.me.fingerprint
+      : '> SET A CHANNEL PASSPHRASE — PBKDF2-SHA384 · 600k iterations · AES-256-GCM';
+  }
+  $('msg-input').disabled    = !enabled;
+  $('btn-send').disabled     = !enabled;
+  $('msg-input').placeholder = placeholder;
+  $('input-hint').textContent = hint;
 }
 
 function updateUserBadge() {
   if (!state.me) return;
   const badge = $('user-badge');
-  badge.classList.remove('hidden');
-  badge.classList.add('visible');
+  badge.classList.remove('hidden'); badge.classList.add('visible');
   badge.innerHTML = '';
-  const dot = document.createElement('span');
-  dot.className = 'dot active';
-  const fp = document.createElement('span');
-  fp.className = 'badge-fp'; fp.textContent = state.me.fingerprint;
+  const dot = document.createElement('span'); dot.className = 'dot active';
+  const fp  = document.createElement('span'); fp.className = 'badge-fp'; fp.textContent = state.me.fingerprint;
   badge.appendChild(dot);
   badge.appendChild(document.createTextNode(state.me.handle + ' '));
   badge.appendChild(fp);
@@ -683,30 +850,27 @@ function updateUserList() {
   list.innerHTML = '';
   const entries  = Object.values(users);
   if (!entries.length) {
-    const empty = document.createElement('div');
-    empty.className = 'user-empty'; empty.textContent = 'No users';
-    list.appendChild(empty); return;
+    const e = document.createElement('div'); e.className = 'user-empty'; e.textContent = 'No users';
+    list.appendChild(e); return;
   }
   entries.forEach(u => {
     const isMe = state.me && u.fingerprint === state.me.fingerprint;
     const div  = document.createElement('div');
     div.className = 'user-item' + (isMe ? ' me' : '');
-    div.title     = 'Fingerprint: ' + u.fingerprint;
-    const dot = document.createElement('span');
-    dot.className = 'user-dot' + (isMe ? ' online' : '');
-    const fp = document.createElement('span');
-    fp.className = 'user-fp'; fp.textContent = u.fingerprint.slice(0, 6);
+    div.title     = 'fp: ' + u.fingerprint + (u.dhPubKeyPem ? ' · DM key present' : ' · No DM key');
+    const dot = document.createElement('span'); dot.className = 'user-dot' + (isMe ? ' online' : '');
+    const fp  = document.createElement('span'); fp.className = 'user-fp'; fp.textContent = u.fingerprint.slice(0, 6);
     div.appendChild(dot);
     div.appendChild(document.createTextNode(u.handle));
     div.appendChild(fp);
+    if (!isMe) div.addEventListener('click', () => openDM(u.fingerprint));
     list.appendChild(div);
   });
   document.querySelectorAll('.online-count').forEach(el => el.textContent = entries.length);
 }
 
 function getStoredUsers() {
-  try { return JSON.parse(localStorage.getItem('cipher_users') || '{}'); }
-  catch { return {}; }
+  try { return JSON.parse(localStorage.getItem('cipher_users') || '{}'); } catch { return {}; }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -717,7 +881,7 @@ function copyKey(which) {
   const text = which === 'priv' ? state.generatedPrivPem : state.generatedPubPem;
   if (!text) return;
   navigator.clipboard.writeText(text)
-    .then(()  => toast('Copied to clipboard'))
+    .then(() => toast('Copied'))
     .catch(() => {
       const ta = Object.assign(document.createElement('textarea'), { value: text });
       document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
@@ -731,9 +895,10 @@ function toast(msg) {
   el.textContent = '// ' + msg;
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function $(id) { return document.getElementById(id); }
 
 // ═══════════════════════════════════════════════════════
@@ -743,8 +908,7 @@ function $(id) { return document.getElementById(id); }
 document.addEventListener('DOMContentLoaded', () => {
 
   if (!window.crypto || !window.crypto.subtle) {
-    document.body.innerHTML = '<div class="no-crypto">Web Crypto API not available.' +
-      ' CIPHER//NET requires HTTPS, a .onion address, or localhost.</div>';
+    document.body.innerHTML = '<div class="no-crypto">Web Crypto API unavailable. CIPHER//NET requires HTTPS, a .onion address, or localhost.</div>';
     return;
   }
 
@@ -768,9 +932,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ── App ──
   $('auth-btn').addEventListener('click', () => {
-    if (confirm('Sign out? You will need your private key to sign back in.')) location.reload();
+    if (confirm('Sign out? You will need your private signing key to re-authenticate.')) location.reload();
   });
-
   $('warn-export-btn').addEventListener('click', exportIdentity);
   $('dismiss-warn-btn').addEventListener('click', dismissStorageWarning);
   $('btn-export-identity').addEventListener('click', exportIdentity);
@@ -790,13 +953,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') { e.preventDefault(); setChannelPassphrase(); }
   });
 
-  // ── Check for returning user ──
-  // If we recognise a previous fingerprint, pre-fill the import tab
-  const myFp      = localStorage.getItem('cipher_my_fingerprint');
-  const allUsers  = getStoredUsers();
-  if (myFp && allUsers[myFp]) {
+  // DM modal
+  $('dm-modal-cancel').addEventListener('click', closeDMModal);
+  $('dm-modal-confirm').addEventListener('click', confirmDMKeyExchange);
+
+  // ── Returning user ──
+  const myFp  = localStorage.getItem('cipher_my_fingerprint');
+  const users = getStoredUsers();
+  if (myFp && users[myFp]) {
     switchLockTab('login');
-    $('login-username').value = allUsers[myFp].handle;
-    toast('Welcome back ' + allUsers[myFp].handle + ' - paste your private key to continue');
+    $('login-username').value = users[myFp].handle;
+    toast('Welcome back ' + users[myFp].handle + ' — paste your private key');
   }
 });

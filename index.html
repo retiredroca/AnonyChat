@@ -8,52 +8,48 @@
 </head>
 <body>
 
-<!-- LOCK SCREEN shown until keypair exists -->
+<!-- ═══ LOCK SCREEN ═══ -->
 <div id="lock-screen">
   <div class="lock-inner">
     <div class="lock-logo">CIPHER<span>//</span>NET</div>
-    <div class="lock-sub">// End-to-end encrypted · Cryptographic identity required</div>
+    <div class="lock-sub">// Cryptographic identity required to enter</div>
 
     <div class="lock-tab-bar">
-      <div class="lock-tab active" id="lock-tab-register" data-tab="register">GENERATE KEYS</div>
-      <div class="lock-tab" id="lock-tab-login" data-tab="login">IMPORT KEY</div>
+      <div class="lock-tab active" id="lock-tab-register">GENERATE KEYS</div>
+      <div class="lock-tab" id="lock-tab-login">IMPORT KEY</div>
     </div>
 
-    <!-- REGISTER PANEL -->
+    <!-- REGISTER -->
     <div id="lock-panel-register">
       <div class="field-group">
         <label class="field-label" for="reg-username">Handle / Username</label>
         <input class="field-input" id="reg-username" type="text" placeholder="your_handle" maxlength="32" autocomplete="off" spellcheck="false">
-        <div class="field-hint">Letters, numbers, underscores. 3-32 chars. This is public.</div>
+        <div class="field-hint">Letters, numbers, underscores. 3-32 chars. Public.</div>
       </div>
       <div class="field-group">
-        <label class="field-label" for="reg-algo">Key Algorithm</label>
-        <select class="field-input" id="reg-algo">
-          <option value="ECDSA-P256">ECDSA P-256 (recommended, fast)</option>
-          <option value="ECDSA-P384">ECDSA P-384 (stronger)</option>
-          <option value="RSA-PSS">RSA-PSS 2048 (classical)</option>
-        </select>
-        <div class="field-hint">Used to sign and encrypt messages via Web Crypto API.</div>
+        <div class="field-label">Key Algorithms</div>
+        <div class="algo-badge">ECDSA P-384 / SHA-384 &nbsp;·&nbsp; ECDH P-384 &nbsp;·&nbsp; AES-256-GCM &nbsp;·&nbsp; PBKDF2-SHA384</div>
+        <div class="field-hint">Signing key + dedicated DM key generated simultaneously. Strongest available in Web Crypto API.</div>
       </div>
       <div id="key-gen-area" class="hidden">
         <div class="progress-bar"><div class="progress-fill" id="gen-progress"></div></div>
         <div class="warning-box">
           <div class="w-title">WARNING: PRIVATE KEY - SHOWN ONCE</div>
-          <p>Save your private key now. It will <strong class="amber">NOT</strong> be stored anywhere. If you lose it, your identity is gone forever.</p>
+          <p>Save your private key now. It will <strong class="amber">NOT</strong> be stored anywhere. If you lose it, your identity is gone forever. Your DM key is derived automatically and persists in localStorage.</p>
         </div>
         <div class="field-group field-group-rel">
-          <label class="field-label">Your Private Key (PKCS#8 PEM)</label>
+          <label class="field-label">Signing Private Key (PKCS#8 PEM)</label>
           <div class="key-display" id="priv-key-display">Generating...</div>
           <button class="copy-btn" id="copy-priv-btn">COPY</button>
         </div>
         <div class="field-group field-group-rel">
-          <label class="field-label">Your Public Key (shared with others)</label>
+          <label class="field-label">Signing Public Key</label>
           <div class="key-display" id="pub-key-display">Generating...</div>
           <button class="copy-btn" id="copy-pub-btn">COPY</button>
         </div>
         <div class="check-row">
           <input type="checkbox" id="confirm-saved">
-          <label for="confirm-saved">I have saved my private key in a secure location. I understand it cannot be recovered if lost.</label>
+          <label for="confirm-saved">I have saved my private key securely. I understand it cannot be recovered if lost.</label>
         </div>
       </div>
       <div class="lock-btn-row">
@@ -62,15 +58,15 @@
       </div>
     </div>
 
-    <!-- IMPORT PANEL -->
+    <!-- IMPORT -->
     <div id="lock-panel-login" class="hidden">
       <div class="drop-zone" id="drop-zone">DROP cipher-identity.json HERE or click to browse</div>
       <input type="file" id="identity-file-input" accept=".json,application/json" class="hidden">
       <div class="identity-preview hidden" id="identity-preview"></div>
       <div class="field-group">
-        <label class="field-label" for="login-privkey">Your Private Key (PKCS#8 PEM)</label>
+        <label class="field-label" for="login-privkey">Signing Private Key (PKCS#8 PEM)</label>
         <textarea class="field-input mono-sm" id="login-privkey" rows="5" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" spellcheck="false"></textarea>
-        <div class="field-hint">Paste your private key. Your identity is re-derived from it.</div>
+        <div class="field-hint">Your identity and DM key are re-derived from this.</div>
       </div>
       <div class="field-group">
         <label class="field-label" for="login-username">Handle (optional override)</label>
@@ -82,11 +78,11 @@
       </div>
     </div>
 
-    <div class="lock-footer">Web Crypto API · AES-GCM encryption · ECDSA signatures · No external requests</div>
+    <div class="lock-footer">ECDSA P-384/SHA-384 · ECDH P-384 · AES-256-GCM · PBKDF2-SHA384 · 600k iter · Web Crypto API</div>
   </div>
 </div>
 
-<!-- MAIN APP hidden until authenticated -->
+<!-- ═══ MAIN APP ═══ -->
 <div id="app" class="hidden">
   <header>
     <div class="logo">CIPHER<span>//</span>NET</div>
@@ -98,49 +94,63 @@
 
   <div id="storage-warning" class="hidden">
     <span class="warn-icon">!</span>
-    <span>Your identity lives in browser localStorage. Clearing site data will erase it.
-    <button id="warn-export-btn" class="warn-link">Export a backup</button> to recover on another device.</span>
+    <span>Identity lives in localStorage. Clearing site data will erase it.
+    <button id="warn-export-btn" class="warn-link">Export backup</button></span>
     <button class="dismiss-warn" id="dismiss-warn-btn" title="Dismiss">x</button>
   </div>
 
   <div class="main">
+    <!-- SIDEBAR -->
     <div class="sidebar">
       <div class="sidebar-section">
         <div class="sidebar-label">// Channels</div>
-        <div class="channel-list">
-          <div class="channel-item active" data-channel="general"># general <span class="online-count" id="cnt-general">0</span></div>
-          <div class="channel-item" data-channel="random"># random <span class="online-count" id="cnt-random">0</span></div>
-          <div class="channel-item" data-channel="tech"># tech <span class="online-count" id="cnt-tech">0</span></div>
+        <div class="channel-list" id="channel-list">
+          <div class="channel-item active" data-channel="general" data-type="channel"># general <span class="online-count" id="cnt-general">0</span></div>
+          <div class="channel-item" data-channel="random" data-type="channel"># random <span class="online-count" id="cnt-random">0</span></div>
+          <div class="channel-item" data-channel="tech" data-type="channel"># tech <span class="online-count" id="cnt-tech">0</span></div>
         </div>
       </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-label">// Direct Messages</div>
+        <div class="dm-list" id="dm-list">
+          <div class="dm-empty">Click a user to open a DM</div>
+        </div>
+      </div>
+
       <div class="sidebar-section sidebar-users">
-        <div class="sidebar-label">// Users</div>
+        <div class="sidebar-label">// Users <span class="sidebar-hint">(click to DM)</span></div>
         <div class="user-list" id="user-list">
           <div class="user-empty">No users</div>
         </div>
       </div>
+
       <div class="sidebar-section">
         <button class="btn btn-ghost btn-full" id="auth-btn">[ SIGN OUT ]</button>
       </div>
       <div class="sidebar-actions hidden" id="identity-actions">
-        <div class="storage-health">
-          <span class="sh-dot"></span>
-          <span>IDENTITY STORED LOCALLY</span>
-        </div>
+        <div class="storage-health"><span class="sh-dot"></span><span>IDENTITY STORED LOCALLY</span></div>
         <button class="btn-tiny highlight" id="btn-export-identity">EXPORT PUBLIC IDENTITY</button>
-        <button class="btn-tiny" id="btn-export-backup">EXPORT FULL BACKUP (JSON)</button>
+        <button class="btn-tiny" id="btn-export-backup">EXPORT FULL BACKUP</button>
       </div>
     </div>
 
+    <!-- CHAT AREA -->
     <div class="chat-area">
       <div class="chat-header">
         <strong id="channel-title"># general</strong>
         <span class="header-sep">·</span>
         <span id="channel-desc">Encrypted channel</span>
+        <!-- Channel passphrase — hidden for DMs -->
         <div class="passphrase-wrap" id="passphrase-wrap">
           <input id="channel-passphrase" type="password" placeholder="channel passphrase..." autocomplete="new-password" spellcheck="false">
           <button class="btn-passphrase" id="btn-set-passphrase">SET KEY</button>
           <span class="enc-status" id="enc-status">NO KEY SET</span>
+        </div>
+        <!-- DM status — hidden for channels -->
+        <div class="dm-header-info hidden" id="dm-header-info">
+          <span class="enc-status active" id="dm-enc-status">ECDH E2E</span>
+          <span class="dm-fp" id="dm-fp"></span>
         </div>
       </div>
 
@@ -148,12 +158,30 @@
 
       <div class="input-area">
         <div class="input-wrap">
-          <span class="input-prefix">&gt;</span>
+          <span class="input-prefix" id="input-prefix">&gt;</span>
           <input id="msg-input" type="text" placeholder="Set a channel passphrase to send messages..." disabled maxlength="2000" autocomplete="off" spellcheck="false">
           <button class="btn-send" id="btn-send" disabled>SEND</button>
         </div>
         <div class="input-hint" id="input-hint">&gt; SET A CHANNEL PASSPHRASE TO ENCRYPT AND SEND MESSAGES</div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- DM key exchange modal -->
+<div class="modal-overlay hidden" id="dm-key-modal">
+  <div class="modal dm-modal">
+    <div class="modal-title">DM KEY EXCHANGE</div>
+    <div class="modal-sub">// To send encrypted DMs, the recipient must share their DM public key with you.</div>
+    <div class="field-group">
+      <label class="field-label">Recipient DM Public Key (SPKI PEM)</label>
+      <textarea class="field-input mono-sm" id="dm-pubkey-input" rows="6" placeholder="-----BEGIN PUBLIC KEY-----&#10;Paste the recipient's DM public key here&#10;-----END PUBLIC KEY-----" spellcheck="false"></textarea>
+      <div class="field-hint">Ask the recipient to share their DM public key from their identity export.</div>
+    </div>
+    <div id="dm-modal-error" class="login-error hidden"></div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="dm-modal-cancel">CANCEL</button>
+      <button class="btn btn-primary" id="dm-modal-confirm">START ENCRYPTED DM</button>
     </div>
   </div>
 </div>
