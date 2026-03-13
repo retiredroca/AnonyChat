@@ -68,7 +68,7 @@ This makes a single outbound request from **your machine** to Google's font CDN,
 | Property | Status |
 |---|---|
 | Message authentication | ✓ ECDSA / RSA-PSS signatures |
-| Private key storage | ✗ Never stored — shown once |
+| Private key storage | ✗ Never stored |
 | Message encryption | ✗ Messages are signed, not encrypted |
 | Transport security | Depends on host (HTTPS / .onion) |
 | Anonymity | Depends on host — use OnionShare + Tor for anonymity |
