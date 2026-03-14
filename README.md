@@ -1,4 +1,6 @@
-#donate simianshampoo522@walletofsatoshi.com
+#DONATE
+bc1p63r9zr5avtj84hqdty2yg4jpa3d0kncdtp7f3skkv2809w4fpyesyw5njj
+simianshampoo522@walletofsatoshi.com
 
 # CIPHER//NET
 
