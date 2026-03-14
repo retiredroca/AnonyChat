@@ -1013,3 +1013,83 @@ document.addEventListener('DOMContentLoaded', () => {
     toast('Welcome back ' + users[myFp].handle + ' - paste your private key');
   }
 });
+
+// ═══════════════════════════════════════════════════════
+// SCREENSHOT DETERRENTS
+// ═══════════════════════════════════════════════════════
+
+(function initScreenProtection() {
+
+  // ── 1. Block right-click context menu ──
+  document.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    return false;
+  });
+
+  // ── 2. Block common keyboard shortcuts for saving/copying ──
+  document.addEventListener('keydown', e => {
+    const ctrl = e.ctrlKey || e.metaKey;
+
+    // PrintScreen / Snapshot key — warn user (cannot block OS capture)
+    if (e.key === 'PrintScreen' || e.key === 'Snapshot') {
+      e.preventDefault();
+      showScreenshotWarning();
+      return false;
+    }
+
+    // Block Ctrl+S (save), Ctrl+U (view source), Ctrl+P (print)
+    if (ctrl && (e.key === 's' || e.key === 'S' ||
+                 e.key === 'u' || e.key === 'U' ||
+                 e.key === 'p' || e.key === 'P')) {
+      e.preventDefault();
+      return false;
+    }
+
+    // Block F12 devtools, F5 hard reload with selection
+    if (e.key === 'F12') {
+      e.preventDefault();
+      return false;
+    }
+  });
+
+  // ── 3. Visibility change — blank screen when window loses focus ──
+  const blank = document.getElementById('screen-blank');
+
+  function hideContent() {
+    if (blank) blank.classList.add('active');
+  }
+  function showContent() {
+    if (blank) blank.classList.remove('active');
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) hideContent();
+    else showContent();
+  });
+
+  // Also blank on window blur (switching apps, alt-tab)
+  window.addEventListener('blur', hideContent);
+  window.addEventListener('focus', showContent);
+
+  // ── 4. PrintScreen warning overlay ──
+  let warnTimer;
+  function showScreenshotWarning() {
+    const el = document.getElementById('screenshot-warn');
+    if (!el) return;
+    el.classList.add('show');
+    clearTimeout(warnTimer);
+    warnTimer = setTimeout(() => el.classList.remove('show'), 3000);
+  }
+
+  // Also try to detect screenshot via clipboard (Chrome only, requires permission)
+  // When PrintScreen is pressed Chrome sometimes writes to clipboard
+  document.addEventListener('copy', e => {
+    // If the copy didn't come from a user text selection in an input,
+    // it may be a screenshot copy — show warning
+    const sel = window.getSelection && window.getSelection();
+    if (!sel || sel.toString().length === 0) {
+      showScreenshotWarning();
+    }
+  });
+
+})();
