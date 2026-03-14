@@ -32,6 +32,7 @@ Built to run on [OnionShare](https://onionshare.org/), but works on any static w
 - **Export full backup** — exports all encrypted message history, public keys, and DM threads as JSON. Private key is never included.
 - **Import / restore** — drag and drop a backup or identity file on the import tab, then paste your private key. Works across devices.
 - **ECDH DM key persistence** — your DM keypair is stored encrypted in localStorage (PBKDF2-wrapped AES-GCM) and automatically restored on import.
+- **Password-protected key export** — optionally encrypt your private key before copying. Enter a password on the registration screen before hitting Copy — the key is encrypted with AES-256-GCM (PBKDF2, 300,000 iterations) and stored as a `CIPHER-ENC:v1:...` string. Useless without the password. On import, the password field appears automatically when an encrypted key is detected.
 
 ---
 
@@ -138,6 +139,19 @@ A dedicated ECDH P-256 keypair is auto-generated alongside your signing key.
 3. Each message is encrypted with a fresh random 12-byte IV. The full signed envelope (text, signature, public key, metadata) is encrypted — only the author hint (first 6 hex chars of fingerprint) is stored in plaintext.
 4. Users without the passphrase see the message locked. Users with the wrong passphrase see a decryption failure.
 
+### Password-protected key export
+
+Private keys can optionally be exported in an encrypted form safe to store in notes apps, cloud storage, or screenshots.
+
+**Encryption:** AES-256-GCM with a key derived via PBKDF2 (300,000 iterations, SHA-256) from a user-supplied password and a random 16-byte salt.
+
+**Format:** `CIPHER-ENC:v1:<base64(16-byte-salt + 12-byte-iv + ciphertext)>`
+
+- The encrypted blob is self-describing — the app detects it automatically on paste.
+- Without the correct password the blob is computationally infeasible to decrypt.
+- The password field on the import tab appears automatically when an encrypted key is pasted.
+- If no password is set, the plain PKCS#8 PEM is copied as before.
+
 ### Security model summary
 
 | Property | Status |
@@ -151,6 +165,7 @@ A dedicated ECDH P-256 keypair is auto-generated alongside your signing key.
 | Anonymity | Depends on host — use OnionShare + Tor Browser |
 | Screenshot prevention | ⚠ Deterrents only — OS capture cannot be blocked |
 | Offline capability | ✓ Service worker caches all assets after first load |
+| Password-protected key export | ✓ AES-256-GCM, PBKDF2-SHA-256, 300k iterations |
 
 ---
 

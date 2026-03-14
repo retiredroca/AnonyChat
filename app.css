@@ -1152,3 +1152,37 @@ button, select, input, textarea {
     overscroll-behavior: none;
   }
 }
+
+/* ─── PASSWORD-PROTECTED KEY EXPORT ──────────────────── */
+.enc-export-row {
+  margin: 6px 0 4px 0;
+}
+
+.enc-export-row .field-input {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.field-hint-inline {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 1px;
+  margin-left: 4px;
+}
+
+#export-hint {
+  font-size: 10px;
+  letter-spacing: 1px;
+  margin-top: 2px;
+  transition: color 0.3s;
+}
+
+#import-password-group {
+  display: none;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

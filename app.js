@@ -259,6 +259,55 @@ async function aesDecrypt(b64, key) {
 }
 
 // ═══════════════════════════════════════════════════════
+// PASSWORD-PROTECTED KEY EXPORT / IMPORT
+// Format: CIPHER-ENC:v1:<base64(16-byte-salt + 12-byte-iv + ciphertext)>
+// Key: PBKDF2-SHA-256, 300 000 iterations, 32-byte output → AES-256-GCM
+// ═══════════════════════════════════════════════════════
+
+const ENC_PREFIX  = 'CIPHER-ENC:v1:';
+const ENC_ITERS   = 300_000;
+
+async function encryptPrivateKey(pemStr, password) {
+  const enc      = new TextEncoder();
+  const salt     = crypto.getRandomValues(new Uint8Array(16));
+  const iv       = crypto.getRandomValues(new Uint8Array(12));
+  const baseKey  = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  const aesKey   = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: ENC_ITERS, hash: 'SHA-256' },
+    baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt']
+  );
+  const ct       = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, enc.encode(pemStr));
+  const out      = new Uint8Array(16 + 12 + ct.byteLength);
+  out.set(salt, 0); out.set(iv, 16); out.set(new Uint8Array(ct), 28);
+  return ENC_PREFIX + btoa(String.fromCharCode(...out));
+}
+
+async function decryptPrivateKey(encStr, password) {
+  if (!encStr.startsWith(ENC_PREFIX))
+    throw new Error('Not an encrypted key — paste your password-protected CIPHER-ENC export.');
+  const enc     = new TextEncoder();
+  const buf     = Uint8Array.from(atob(encStr.slice(ENC_PREFIX.length)), c => c.charCodeAt(0));
+  const salt    = buf.slice(0, 16);
+  const iv      = buf.slice(16, 28);
+  const ct      = buf.slice(28);
+  const baseKey = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  const aesKey  = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: ENC_ITERS, hash: 'SHA-256' },
+    baseKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
+  );
+  try {
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, ct);
+    return new TextDecoder().decode(plain);
+  } catch {
+    throw new Error('Wrong password — decryption failed.');
+  }
+}
+
+function isEncryptedKey(str) {
+  return str.trim().startsWith(ENC_PREFIX);
+}
+
+// ═══════════════════════════════════════════════════════
 // PBKDF2 channel key
 // ═══════════════════════════════════════════════════════
 
@@ -410,9 +459,30 @@ async function importKey() {
   const btn = $('btn-import');
   btn.textContent = 'VERIFYING...'; btn.disabled = true;
 
+  // If the pasted value is a CIPHER-ENC encrypted key, decrypt it first
+  let pemToImport = privPem;
+  if (isEncryptedKey(privPem)) {
+    const pw = $('import-password') && $('import-password').value.trim();
+    if (!pw) {
+      showLoginError('This key is password-protected. Enter the password in the field above.');
+      // Show the password field if hidden
+      const pg = $('import-password-group');
+      if (pg) { pg.style.display = ''; pg.classList.remove('hidden'); }
+      $('import-password') && $('import-password').focus();
+      btn.textContent = 'IMPORT AND ENTER'; btn.disabled = false; return;
+    }
+    btn.textContent = 'DECRYPTING...';
+    try {
+      pemToImport = await decryptPrivateKey(privPem, pw);
+    } catch (e) {
+      showLoginError(e.message);
+      btn.textContent = 'IMPORT AND ENTER'; btn.disabled = false; return;
+    }
+  }
+
   let keyData;
   try {
-    keyData = await importPrivateKey(privPem);
+    keyData = await importPrivateKey(pemToImport);
   } catch (e) {
     showLoginError(e.message);
     btn.textContent = 'IMPORT AND ENTER'; btn.disabled = false; return;
@@ -927,11 +997,37 @@ function getStoredUsers() {
 // COPY / TOAST / HELPERS
 // ═══════════════════════════════════════════════════════
 
-function copyKey(which) {
-  const text = which === 'priv' ? state.generatedPrivPem : state.generatedPubPem;
+async function copyKey(which) {
+  let text = which === 'priv' ? state.generatedPrivPem : state.generatedPubPem;
   if (!text) return;
+
+  // If copying the private key and a password is set, encrypt it first
+  if (which === 'priv') {
+    const pw = $('export-password') && $('export-password').value;
+    if (pw && pw.trim()) {
+      const btn = $('copy-priv-btn');
+      const orig = btn.textContent;
+      btn.textContent = 'ENCRYPTING...'; btn.disabled = true;
+      try {
+        text = await encryptPrivateKey(text, pw.trim());
+        $('export-hint').textContent = '✓ Encrypted key copied — you will need this password to import.';
+        $('export-hint').style.color = 'var(--green3)';
+      } catch (e) {
+        toast('Encryption failed: ' + e.message);
+        btn.textContent = orig; btn.disabled = false; return;
+      }
+      btn.textContent = orig; btn.disabled = false;
+    } else {
+      const hint = $('export-hint');
+      if (hint) {
+        hint.textContent = 'Plain key copied — no password set.';
+        hint.style.color = 'var(--amber)';
+      }
+    }
+  }
+
   navigator.clipboard.writeText(text)
-    .then(() => toast('Copied'))
+    .then(() => toast(which === 'priv' ? 'Private key copied' : 'Public key copied'))
     .catch(() => {
       const ta = Object.assign(document.createElement('textarea'), { value: text });
       document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
@@ -979,6 +1075,20 @@ document.addEventListener('DOMContentLoaded', () => {
   $('copy-priv-btn').addEventListener('click', () => copyKey('priv'));
   $('copy-pub-btn').addEventListener('click',  () => copyKey('pub'));
   $('btn-import').addEventListener('click', importKey);
+
+  // Show password field automatically when an encrypted key is pasted
+  $('login-privkey').addEventListener('input', function() {
+    const pg = $('import-password-group');
+    if (!pg) return;
+    if (isEncryptedKey(this.value)) {
+      pg.style.display = '';
+      pg.classList.remove('hidden');
+      $('import-password-hint').textContent = '— encrypted key detected, password required';
+      $('import-password-hint').style.color = 'var(--amber)';
+    } else {
+      pg.style.display = 'none';
+    }
+  });
 
   const dz = $('drop-zone');
   dz.addEventListener('click',     () => $('identity-file-input').click());
