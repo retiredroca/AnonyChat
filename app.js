@@ -512,6 +512,12 @@ async function importKey() {
 
   state.me = { handle, publicKeyPem: pubPem, signingKey: keyData.privateKey, fingerprint: fp, algo: keyData.algorithm, dhPrivKey, dhPubKeyPem };
 
+  // Clear sensitive fields before entering app
+  $('login-privkey').value   = '';
+  $('login-username').value  = '';
+  $('import-password').value = '';
+  hideLoginError();
+
   btn.textContent = 'IMPORT AND ENTER'; btn.disabled = false;
   enterApp();
   sysMsg(handle + ' connected.');
