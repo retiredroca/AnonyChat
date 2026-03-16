@@ -1,97 +1,92 @@
 # CIPHER//NET
 
-A self-hosted, single-page encrypted chat application. No accounts, no servers, no tracking — just cryptographic keypairs, signed messages, and end-to-end encryption.
+A self-hosted, single-page end-to-end encrypted chat application. No accounts, no servers, no tracking — just cryptographic keypairs, signed messages, and post-quantum encryption.
 
-Built to run on [OnionShare](https://onionshare.org/), but works on any static web host over HTTPS.
+Built to run on [OnionShare](https://onionshare.org/), installable as a PWA, and deployable to any static web host.
 
 ---
 
 ## Features
 
 ### Identity & Authentication
-- **Keypair identity** — your account is a public/private keypair generated entirely in your browser. No passwords, no email, no server.
+- **Keypair identity** — your account is a cryptographic keypair generated entirely in your browser. No email, no password, no server.
 - **Private key shown once** — your signing private key is displayed at registration and immediately discarded from memory. It is never stored anywhere.
-- **Lock screen gate** — the chat UI is completely hidden until you authenticate with a keypair. Nothing is accessible without a valid key.
+- **Lock screen gate** — the entire chat UI is hidden until you authenticate with a valid keypair. Nothing is accessible without a key.
 - **Returning user detection** — if a fingerprint is found in localStorage, the import tab opens automatically with your handle pre-filled.
+- **Password-protected key export** — optionally encrypt your private key before copying. AES-256-GCM, PBKDF2-SHA-256, 300,000 iterations. Stored as `CIPHER-ENC:v1:...` — useless without the password. Import tab detects encrypted keys automatically.
 
 ### Encryption
-- **Channel encryption** — all channel messages are encrypted with AES-256-GCM. A shared passphrase is required to read or send in a channel. The key is derived via PBKDF2 (200,000 iterations, SHA-256) with a deterministic per-channel salt.
-- **Direct message encryption** — DMs use ECDH P-256 key exchange. Both parties independently derive the same AES-256-GCM shared key from each other's public DH key — no key is ever transmitted.
-- **Message signing** — every message is signed with your ECDSA or RSA-PSS private key and verified on receipt. Each message displays a ✓ SIGNED or ✗ INVALID badge.
-- **Messages locked without key** — history without the channel passphrase shows `[encrypted — key required to read]`. Wrong passphrase shows `[decryption failed]`.
+- **Channel encryption** — all channel messages encrypted with AES-256-GCM. A shared passphrase is required to read or send. Key derived via PBKDF2 (200,000 iterations, SHA-256) with a deterministic per-channel salt.
+- **Post-quantum DM encryption** — DMs use ML-KEM-768 (FIPS 203) key encapsulation by default. Alice encapsulates to Bob's public key, Bob decapsulates — no shared secret is ever transmitted. Shared secret fed through HKDF-SHA256 → AES-256-GCM.
+- **Classical DM encryption** — ECDH P-256 key exchange for classical-mode users. Both parties independently derive the same AES-256-GCM key.
+- **Message signing** — every message is signed with your private key and verified on receipt. Displays ✓ SIGNED or ✗ INVALID. Default: ML-DSA-65 (FIPS 204). Classical: ECDSA P-256/P-384 or RSA-PSS 2048.
+- **Messages locked without key** — history without the passphrase shows `[encrypted — key required to read]`. Wrong passphrase shows `[decryption failed]`.
+
+### Post-Quantum Cryptography
+- **ML-DSA-65** (FIPS 204) — default signing algorithm. Quantum-resistant. ~AES-192 security level. Keys exported as `PQ-SK:<base64>`.
+- **ML-KEM-768** (FIPS 203) — default DM key encapsulation. Quantum-resistant. ~AES-192 security level.
+- Loaded automatically from [esm.sh](https://esm.sh) CDN via `@noble/post-quantum`. No local file required for online deployments.
+- Classical algorithms (ECDSA, RSA-PSS) still available and fully supported for import of older keys.
+
+### PGP / GPG / Kleopatra
+- **Export PGP keypair** — generate an RSA-4096 OpenPGP keypair tied to your handle. Export `.asc` files importable directly into GPG or Kleopatra. Optional passphrase protection.
+- **Import existing GPG key** — paste any armored GPG private key (RSA, ECC, protected or unprotected).
+- **Encrypt & decrypt messages** — PGP-encrypt for any recipient (paste their public key), signed with your key. Decrypt with signature verification. Fully interoperable with GPG, Kleopatra, Thunderbird.
+- Requires `openpgp.min.js` — see `GET_OPENPGP.md`.
 
 ### Privacy Deterrents
-- **No text selection** — chat content cannot be selected or copied via keyboard.
-- **Right-click blocked** — context menu is suppressed on the entire page.
-- **Screen blanking** — the entire screen goes black when the window loses focus or is hidden (alt-tab, switching apps). Returns immediately on refocus.
-- **PrintScreen warning** — pressing Print Screen or Snapshot triggers a `// SCREENSHOT DETECTED` warning overlay. Note: OS-level screenshots cannot be blocked by a browser — this is a deterrent, not a guarantee.
-- **Keyboard shortcuts suppressed** — Ctrl+S, Ctrl+U, Ctrl+P, and F12 are blocked.
+- **No text selection** — chat content cannot be selected or copied.
+- **Right-click blocked** — context menu suppressed on the entire page.
+- **Screen blanking** — screen goes black when the window loses focus (alt-tab, switching apps). Returns instantly on refocus.
+- **PrintScreen warning** — `// SCREENSHOT DETECTED` overlay on Print Screen. Note: OS-level screenshots cannot be blocked — this is a deterrent only.
+- **Keyboard shortcuts suppressed** — Ctrl+S, Ctrl+U, Ctrl+P, F12 blocked.
 
 ### Identity Management
-- **Export public identity** — share your handle, public signing key, and ECDH DM public key as a JSON file. Safe to distribute.
-- **Export full backup** — exports all encrypted message history, public keys, and DM threads as JSON. Private key is never included.
-- **Import / restore** — drag and drop a backup or identity file on the import tab, then paste your private key. Works across devices.
-- **PGP / GPG / Kleopatra compatibility** — full OpenPGP integration via OpenPGP.js (bundled locally). Three capabilities:
-  - **Export PGP keypair** — generate an RSA-4096 OpenPGP keypair tied to your handle. Export armored public and secret key files (`.asc`) importable directly into GPG or Kleopatra. Optional passphrase protection on the secret key.
-  - **Import existing GPG key** — paste any armored GPG private key (RSA, ECC, protected or unprotected) to load it into the PGP tool for encrypt/decrypt operations.
-  - **Encrypt & decrypt messages** — PGP-encrypt a message for any recipient (paste their public key), signed with your key. Decrypt any PGP-encrypted message sent to you, with signature verification.
-- **ECDH DM key persistence** — your DM keypair is stored encrypted in localStorage (PBKDF2-wrapped AES-GCM) and automatically restored on import.
-- **Password-protected key export** — optionally encrypt your private key before copying. Enter a password on the registration screen before hitting Copy — the key is encrypted with AES-256-GCM (PBKDF2, 300,000 iterations) and stored as a `CIPHER-ENC:v1:...` string. Useless without the password. On import, the password field appears automatically when an encrypted key is detected.
+- **Export public identity** — share your handle, public signing key, and DM public key as JSON. Safe to distribute.
+- **Export full backup** — all encrypted message history, public keys, and DM threads as JSON. Private key never included.
+- **Import / restore** — drag and drop a backup or identity file, then paste your private key. Works across devices.
+- **DM key persistence** — signing and DM keys stored encrypted in localStorage (PBKDF2-wrapped AES-GCM) and restored automatically on import.
 
----
-
-## Progressive Web App (PWA)
-
-CIPHER//NET is installable as a native-feeling app on any device — no app store required.
-
-### Installing on Android
-1. Open the site in Chrome
-2. Tap the three-dot menu → **Add to Home screen**
-3. The app installs with a home screen icon and runs fullscreen
-
-### Installing on iPhone / iPad
-1. Open the site in **Safari** (Chrome on iOS cannot install PWAs)
-2. Tap the Share button → **Add to Home Screen**
-
-### Installing on Desktop
-Chrome and Edge show an install icon (⊕) in the address bar when a PWA is detected. Click it to install.
-
-### PWA capabilities
-- **Offline** — the service worker caches all files on first load. The app works fully without a network connection after that.
-- **Fullscreen** — runs without browser chrome in standalone display mode.
-- **Home screen icon** — green lock icon on black, 192×512px.
-- **Safe area support** — respects notch and gesture bar insets on iPhone X+ and modern Android.
+### Progressive Web App
+- Installable to home screen on Android (Chrome) and iOS (Safari).
+- Runs fullscreen with no browser chrome.
+- Service worker caches all assets — works fully offline after first load.
+- Safe area insets for notched phones.
 
 ---
 
 ## Files
 
 ```
-index.html       — markup only, no inline scripts or styles
-app.css          — all styles
-app.js           — all application logic and crypto
-sw.js            — service worker: caches assets for offline use
-manifest.json    — PWA manifest: name, icons, display mode, theme
-icon-192.png     — home screen icon (192×192)
-icon-512.png     — high-res icon for splash screens (512×512)
-embed-fonts.py   — optional: bakes fonts as base64 for fully offline use
-openpgp.min.js   — OpenPGP.js v5 (must be downloaded separately, see GET_OPENPGP.md)
-noble-pq.js      — noble-post-quantum browser bundle (must be downloaded separately, see GET_OPENPGP.md)
-GET_OPENPGP.md   — instructions for downloading openpgp.min.js and noble-pq.js
-README.md        — this file
+index.html           — markup only, no inline scripts or styles
+app.css              — all styles
+app.js               — all application logic and crypto
+sw.js                — service worker: offline caching
+manifest.json        — PWA manifest: name, icons, display mode
+icon-192.png         — home screen icon (192×192)
+icon-512.png         — high-res icon / splash screen (512×512)
+embed-fonts.py       — optional: bakes fonts as base64 for fully offline use
+openpgp.min.js       — OpenPGP.js v5 (download separately — see GET_OPENPGP.md)
+GET_OPENPGP.md       — download instructions for openpgp.min.js
+README.md            — this file
+landing.html         — GitHub Pages landing page (rename to index.html in repo root)
 ```
+
+> **Post-quantum library** (`@noble/post-quantum`) loads automatically from esm.sh CDN — no local file required for online deployments. For offline/OnionShare use, see `GET_OPENPGP.md`.
 
 ---
 
 ## Hosting on OnionShare
 
 1. Open OnionShare → **Publish website**
-2. Add `index.html`, `app.css`, and `app.js`
+2. Add `index.html`, `app.css`, `app.js`, and `openpgp.min.js`
 3. Start — share the `.onion` address
 
-No Python, no Node, no configuration. The app makes zero external requests and is fully compliant with OnionShare's strict Content Security Policy (`default-src 'self'`).
+No Python, no Node, no configuration. Zero external requests. Fully compliant with OnionShare's strict Content Security Policy (`default-src 'self'`).
 
-> **Note:** Use **Publish website** mode, not "Serve files" — the latter serves a directory listing rather than loading `index.html` as the app entry point.
+> **Note:** Post-quantum crypto requires internet access to load from esm.sh CDN. On OnionShare/offline, select a classical algorithm (ECDSA P-256, P-384, or RSA-PSS) instead.
+
+> Use **Publish website** mode, not "Serve files".
 
 ---
 
@@ -99,112 +94,114 @@ No Python, no Node, no configuration. The app makes zero external requests and i
 
 Any static file server works: GitHub Pages, Nginx, Caddy, Apache, `python3 -m http.server`.
 
-> **Web Crypto API requires HTTPS, localhost, or a .onion address.** Plain HTTP on a public domain will not work — `crypto.subtle` is unavailable in insecure contexts.
+> **Web Crypto API requires HTTPS, localhost, or a .onion address.** Plain HTTP will not work.
+
+---
+
+## Installing as PWA
+
+### Android
+1. Open in Chrome → three-dot menu → **Add to Home screen**
+
+### iPhone / iPad
+1. Open in **Safari** → Share → **Add to Home Screen**
+> Chrome on iOS cannot install PWAs.
+
+### Desktop
+Chrome and Edge show an install icon (⊕) in the address bar. Click to install.
 
 ---
 
 ## Embedding fonts (optional)
 
-By default the app uses a system monospace font stack. To embed [Share Tech Mono](https://fonts.google.com/specimen/Share+Tech+Mono) and [VT323](https://fonts.google.com/specimen/VT323) as base64 data URIs for a consistent look everywhere including air-gapped machines:
+By default the app uses a system monospace font stack. To embed [Share Tech Mono](https://fonts.google.com/specimen/Share+Tech+Mono) and [VT323](https://fonts.google.com/specimen/VT323) as base64 for fully offline/consistent use:
 
 ```bash
 python3 embed-fonts.py
 ```
 
-This makes a one-time request from **your machine** to Google's font CDN, then splices the fonts into `app.css`. After that, the app makes zero network requests.
+Makes a one-time request from your machine to Google Fonts, then splices the fonts into `app.css`. After that, zero network requests.
 
 ---
 
 ## Cryptographic architecture
 
-### Signing keys (per-user identity)
+### Signing algorithms
 
-Three algorithms available at registration — all generated via the browser's native Web Crypto API:
+| Algorithm | Security | Quantum-resistant | Format | Notes |
+|---|---|---|---|---|
+| **ML-DSA-65** | ~AES-192 | ✅ FIPS 204 | `PQ-SK:<base64>` | **Default** |
+| ECDSA P-256 | 128-bit | ❌ | PKCS#8 PEM | Classical |
+| ECDSA P-384 | 192-bit | ❌ | PKCS#8 PEM | Classical |
+| RSA-PSS 2048 | ~112-bit | ❌ | PKCS#8 PEM | Classical |
 
-| Algorithm | Security | Quantum-resistant | Notes |
+### DM key exchange
+
+| Mode | Algorithm | Security | Quantum-resistant |
 |---|---|---|---|
-| **ML-DSA-65** | ~AES-192 | ✅ Yes — FIPS 204 | **Default.** Post-quantum. Larger keys (~4KB secret, ~2KB public). |
-| ECDSA P-256 | 128-bit | ❌ No | Classical. Fast, universally supported. |
-| ECDSA P-384 | 192-bit | ❌ No | Classical. Stronger curve, slightly slower. |
-| RSA-PSS 2048 | ~112-bit | ❌ No | Classical RSA. Large keys, slowest generation. |
+| **Default** | ML-KEM-768 (FIPS 203) | ~AES-192 | ✅ |
+| Classical | ECDH P-256 | 128-bit | ❌ |
 
-- ML-DSA-65 secret keys are exported as `PQ-SK:<base64>` (not PKCS#8 PEM). They are larger than classical keys — this is normal.
-- ECDSA P-256 signs with SHA-256; P-384 signs with SHA-384.
-- Classical private keys are exported as PKCS#8 PEM. Re-import is supported for all algorithm types on all major browsers.
+### Channel encryption
 
-### DM encryption
-
-Two modes depending on the signing algorithm chosen at registration:
-
-**Post-quantum (ML-KEM-768, FIPS 203) — default:**
-1. A dedicated ML-KEM-768 keypair is auto-generated alongside your ML-DSA-65 signing key.
-2. When Alice opens a DM to Bob, she *encapsulates* to Bob's ML-KEM public key — producing a KEM ciphertext and a shared secret. The ciphertext is embedded in the first DM message.
-3. Bob *decapsulates* using his ML-KEM secret key to recover the identical shared secret. No secret is ever transmitted.
-4. The shared secret is fed through HKDF-SHA256 to derive an AES-256-GCM session key.
-5. Each DM message is signed with ML-DSA-65 and encrypted with the derived AES key.
-6. The ML-KEM secret key is stored in localStorage encrypted (PBKDF2-wrapped AES-GCM) under `cipher_pqkem_<fingerprint>`.
-
-**Classical (ECDH P-256) — legacy/classical mode:**
-1. A dedicated ECDH P-256 keypair is auto-generated alongside the signing key.
-2. Both parties derive the same AES-256-GCM key independently using `ECDH.deriveKey`.
-3. No shared key is transmitted. Messages are signed with ECDSA and encrypted with the derived AES key.
-4. The ECDH private key is stored encrypted in localStorage (PBKDF2-wrapped AES-GCM) under `cipher_dh_<fingerprint>`.
-
-### Channel encryption (PBKDF2 + AES-256-GCM)
-
-1. Set a passphrase in the channel header.
-2. The app derives an AES-256-GCM key via PBKDF2 (200,000 iterations, SHA-256) using a deterministic per-channel salt: `SHA-256("cipher-channel:<channel>")`.
-3. Each message is encrypted with a fresh random 12-byte IV. The full signed envelope (text, signature, public key, metadata) is encrypted — only the author hint (first 6 hex chars of fingerprint) is stored in plaintext.
-4. Users without the passphrase see the message locked. Users with the wrong passphrase see a decryption failure.
+PBKDF2-SHA-256 (200,000 iterations) derives an AES-256-GCM key from a shared passphrase. Salt: `SHA-256("cipher-channel:<channel>")`. Each message has a fresh random 12-byte IV. The entire signed envelope is encrypted — only the author hint (6 hex chars of fingerprint) is stored in plaintext.
 
 ### Password-protected key export
 
-Private keys can optionally be exported in an encrypted form safe to store in notes apps, cloud storage, or screenshots.
+`CIPHER-ENC:v1:<base64(16-byte-salt + 12-byte-iv + ciphertext)>`
 
-**Encryption:** AES-256-GCM with a key derived via PBKDF2 (300,000 iterations, SHA-256) from a user-supplied password and a random 16-byte salt.
+PBKDF2-SHA-256, 300,000 iterations → AES-256-GCM. The app detects the prefix on paste and shows the password field automatically. Works for both classical (PEM) and PQ (`PQ-SK:`) keys.
 
-**Format:** `CIPHER-ENC:v1:<base64(16-byte-salt + 12-byte-iv + ciphertext)>`
+### Post-quantum key sizes
 
-- The encrypted blob is self-describing — the app detects it automatically on paste.
-- Without the correct password the blob is computationally infeasible to decrypt.
-- The password field on the import tab appears automatically when an encrypted key is pasted.
-- If no password is set, the plain PKCS#8 PEM is copied as before.
+| | ML-DSA-65 | ECDSA P-256 |
+|---|---|---|
+| Secret key | 4,032 bytes | 32 bytes |
+| Public key | 1,952 bytes | 64 bytes |
+| Signature | 3,309 bytes | 64 bytes |
 
-### Security model summary
+| | ML-KEM-768 | ECDH P-256 |
+|---|---|---|
+| Public key | 1,184 bytes | 64 bytes |
+| Secret key | 2,400 bytes | 32 bytes |
+| Ciphertext | 1,088 bytes | 64 bytes |
+
+Larger keys are inherent to lattice-based PQ cryptography — this is expected.
+
+### Security model
 
 | Property | Status |
 |---|---|
-| Channel message encryption | ✓ AES-256-GCM, PBKDF2-SHA-256, 200k iterations |
-| DM encryption (PQ default) | ✓ ML-KEM-768 + HKDF + AES-256-GCM — quantum-resistant |
+| Channel encryption | ✓ AES-256-GCM · PBKDF2-SHA-256 · 200k iterations |
+| DM encryption (default) | ✓ ML-KEM-768 + HKDF + AES-256-GCM · quantum-resistant |
 | DM encryption (classical) | ✓ ECDH P-256 + AES-256-GCM |
-| Message signing (PQ default) | ✓ ML-DSA-65 — FIPS 204, quantum-resistant |
-| Message signing (classical) | ✓ ECDSA P-256/P-384 or RSA-PSS |
-| Private signing key storage | ✗ Never stored — shown once at registration |
-| DM key storage | ✓ Stored encrypted (PBKDF2-wrapped AES-GCM) |
-| Transport security | Depends on host (use HTTPS or .onion) |
+| Message signing (default) | ✓ ML-DSA-65 · FIPS 204 · quantum-resistant |
+| Message signing (classical) | ✓ ECDSA P-256/P-384 or RSA-PSS 2048 |
+| Private signing key storage | ✗ Never stored — shown once, then discarded |
+| DM key storage | ✓ Encrypted in localStorage (PBKDF2-wrapped AES-GCM) |
+| Password-protected export | ✓ AES-256-GCM · PBKDF2-SHA-256 · 300k iterations |
+| PGP interoperability | ✓ OpenPGP.js v5 · RSA-4096 · GPG/Kleopatra compatible |
+| Quantum resistance | ✓ ML-DSA-65 + ML-KEM-768 (NIST FIPS 203/204) |
+| Transport security | Depends on host — use HTTPS or .onion |
 | Anonymity | Depends on host — use OnionShare + Tor Browser |
 | Screenshot prevention | ⚠ Deterrents only — OS capture cannot be blocked |
 | Offline capability | ✓ Service worker caches all assets after first load |
-| PGP encryption | ✓ OpenPGP.js v5, RSA-4096, armored export, GPG/Kleopatra compatible |
-| Password-protected key export | ✓ AES-256-GCM, PBKDF2-SHA-256, 300k iterations |
-| Quantum resistance | ✓ ML-DSA-65 + ML-KEM-768 (NIST FIPS 203/204) — default for new accounts |
 
 ---
 
 ## Recovering your identity
 
-Your signing private key is never stored. To sign back in:
-
+**Signing back in (same device):**
 1. Go to the **Import Key** tab
-2. Paste your signing private key (PKCS#8 PEM — the one shown during registration)
-3. Your fingerprint, DM key, and message history are automatically restored from localStorage
+2. Paste your signing private key — PEM for classical, `PQ-SK:...` for post-quantum
+3. If password-protected, enter your export password — the field appears automatically
+4. Your fingerprint, DM key, and message history restore from localStorage
 
-To move to another device:
-
+**Moving to another device:**
 1. Export a **Full Backup** from the sidebar
 2. On the new device, drop the backup JSON onto the Import tab
-3. Paste your private signing key
-4. All history, user keys, and DM threads are restored
+3. Paste your private signing key (and password if set)
+4. All history, user records, and DM threads are restored
 
 ---
 
@@ -212,99 +209,42 @@ To move to another device:
 
 Requires Web Crypto API: Firefox, Chrome, Brave, Safari, Tor Browser.
 
-- **Tor Browser:** Security level must be **Standard** or **Safer**. The **Safest** level disables JavaScript entirely.
-- **Firefox:** Key import uses a JWK round-trip path for full compatibility.
-- **Extensions:** Some wallet extensions (e.g. MetaMask) run SES lockdown on page load. Disable them on the page if crypto operations fail.
-
----
-
-## localStorage keys
-
-| Key | Contents |
-|---|---|
-| `cipher_users` | Public key registry: handle, public key PEM, fingerprint, algo, DH public key |
-| `cipher_msgs_<channel>` | Up to 200 encrypted messages per channel |
-| `cipher_dm_<fpA>_<fpB>` | DM thread (fingerprints sorted, order-independent) |
-| `cipher_dh_<fingerprint>` | ECDH private key for classical DM encryption (AES-GCM wrapped) |
-| `cipher_pqkem_<fingerprint>` | ML-KEM-768 secret key for post-quantum DM encryption (AES-GCM wrapped) |
-| `cipher_my_fingerprint` | Last authenticated fingerprint (for returning user detection) |
-
-All message content is stored as ciphertext. Public keys and fingerprints are stored in plaintext.
-
----
-
-## Post-Quantum Cryptography
-
-CIPHER//NET implements the NIST post-quantum cryptography standards (finalised 2024) via [noble-post-quantum](https://github.com/paulmillr/noble-post-quantum) — a pure JavaScript, audited, zero-dependency implementation.
-
-### Setup
-
-Download `noble-pq.js` and place it in the repo root (see `GET_OPENPGP.md`). The rest of the app works without it — new accounts will fall back to ECDSA P-256 if the library is missing.
-
-### Algorithms
-
-| Standard | Algorithm | Replaces | Security |
-|---|---|---|---|
-| FIPS 204 | ML-DSA-65 | ECDSA signing | ~AES-192 |
-| FIPS 203 | ML-KEM-768 | ECDH key exchange | ~AES-192 |
-
-### Key sizes
-
-Post-quantum keys are significantly larger than classical keys:
-
-| | ML-DSA-65 | ECDSA P-256 |
-|---|---|---|
-| Secret key | 4,032 bytes | 32 bytes |
-| Public key | 1,952 bytes | 64 bytes |
-| Signature | 3,309 bytes | 64 bytes |
-| DM key (KEM) | 1,184 bytes public / 2,400 bytes secret | 64 bytes |
-
-This is expected and inherent to lattice-based cryptography — the tradeoff for quantum resistance.
-
-### Key format
-
-PQ secret keys are exported as `PQ-SK:<base64>` rather than PKCS#8 PEM. The app detects the prefix automatically on import.
-
-### Quantum threat context
-
-The current elliptic curve algorithms (ECDSA, ECDH) are vulnerable to Shor's algorithm on a sufficiently powerful quantum computer. Breaking P-256 would require an estimated 2,000–4,000 logical qubits — likely 10–20+ years away with current progress. ML-DSA-65 and ML-KEM-768 are based on lattice problems with no known quantum speedup.
-
-**"Harvest now, decrypt later"** — adversaries may be recording encrypted traffic today to decrypt once quantum computers mature. ML-KEM-768 protects against this for DMs.
+- **Tor Browser:** Security level must be **Standard** or **Safer**. Safest disables JavaScript.
+- **Firefox:** Key import uses a JWK round-trip for full compatibility across all key types.
+- **Extensions:** Wallet extensions running SES lockdown (e.g. MetaMask) may interfere. Disable on the page if crypto operations fail.
+- **Post-quantum:** Loads from esm.sh CDN — requires internet. Classical algorithms work fully offline.
 
 ---
 
 ## PGP / GPG / Kleopatra
 
-CIPHER//NET includes a full OpenPGP tool via [OpenPGP.js v5](https://openpgpjs.org/), bundled locally for offline and OnionShare use.
+Requires `openpgp.min.js` — see `GET_OPENPGP.md` for download instructions. The sidebar shows four PGP buttons once signed in:
 
-### Setup
+**PGP EXPORT KEYPAIR** — generates RSA-4096 OpenPGP keypair. Optional UID and passphrase. Downloads `public.asc` and `secret.asc`.
+- Kleopatra: File → Import → `secret.asc`
+- GPG: `gpg --import secret.asc`
 
-Download `openpgp.min.js` and place it in the repo root alongside `index.html` (see `GET_OPENPGP.md`). The rest of the app works without it — the PGP buttons will show a warning if the file is missing.
+**PGP IMPORT GPG KEY** — paste any `-----BEGIN PGP PRIVATE KEY BLOCK-----` armored key. Supports RSA, ECC, passphrase-protected.
 
-### Export PGP Keypair (Option A)
+**PGP ENCRYPT MSG** — paste recipient's public key, type message, click ENCRYPT & SIGN. Output is a standard PGP message block decryptable by any OpenPGP client.
 
-Generates a fresh RSA-4096 OpenPGP keypair associated with your CIPHER//NET handle:
+**PGP DECRYPT MSG** — paste any PGP message encrypted to your key. Optionally paste sender's public key for signature verification (✓/✗).
 
-1. Click **PGP EXPORT KEYPAIR** in the sidebar
-2. Optionally enter a PGP User ID (e.g. `Alice <alice@example.com>`) and an export passphrase
-3. Click **GENERATE PGP KEYPAIR**
-4. Download or copy `public.asc` and `secret.asc`
+---
 
-**Importing into Kleopatra:** File → Import → select `secret.asc` → enter passphrase if set.
-**Importing into GPG:** `gpg --import secret.asc`
+## localStorage schema
 
-### Import Existing GPG Key (Option C)
+| Key | Contents |
+|---|---|
+| `cipher_users` | Public key registry: handle, public key, fingerprint, algo, DM public key |
+| `cipher_msgs_<channel>` | Up to 200 encrypted messages per channel |
+| `cipher_dm_<fpA>_<fpB>` | DM thread (fingerprints sorted, order-independent) |
+| `cipher_dh_<fingerprint>` | ECDH private key — classical DM encryption (AES-GCM wrapped) |
+| `cipher_pqkem_<fingerprint>` | ML-KEM-768 secret key — PQ DM encryption (AES-GCM wrapped) |
+| `cipher_my_fingerprint` | Last authenticated fingerprint (for returning user detection) |
 
-Use your existing Kleopatra/GPG identity inside CIPHER//NET:
+All message content is stored as ciphertext. Public keys and fingerprints are in plaintext.
 
-1. Export from GPG: `gpg --armor --export-secret-keys YOUR_KEY_ID > secret.asc`
-2. Click **PGP IMPORT GPG KEY** in the sidebar
-3. Paste the armored key and enter your passphrase if protected
+---
 
-### Encrypt & Decrypt Messages (Option B)
-
-PGP messages encrypted here can be decrypted by any GPG/Kleopatra user and vice versa:
-
-- **Encrypt:** paste recipient's public key, type your message, click **ENCRYPT & SIGN** — produces a standard `-----BEGIN PGP MESSAGE-----` block
-- **Decrypt:** paste any PGP message encrypted to your key — optionally paste sender's public key for signature verification
 
