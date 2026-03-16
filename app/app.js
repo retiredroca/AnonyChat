@@ -285,17 +285,35 @@ function pqAvailable() {
 }
 
 function getPQLib() {
-  // noble-post-quantum standalone bundle exposes window.noblePostQuantum
-  if (typeof noblePostQuantum !== 'undefined') {
-    const lib = noblePostQuantum;
-    return {
-      ml_dsa65:  lib.ml_dsa65  || lib['ml-dsa']?.ml_dsa65,
-      ml_kem768: lib.ml_kem768 || lib['ml-kem']?.ml_kem768,
-    };
+  // The noble-post-quantum standalone bundle may expose globals under several names
+  // depending on the build version. Try all known variants.
+  let lib = null;
+
+  if (typeof noblePostQuantum !== 'undefined')         lib = noblePostQuantum;
+  else if (typeof noble_post_quantum !== 'undefined')  lib = noble_post_quantum;
+  else if (typeof noblePQ !== 'undefined')             lib = noblePQ;
+
+  if (lib) {
+    // The bundle exports all algorithms at the top level
+    const ml_dsa65  = lib.ml_dsa65  || (lib.mlDsa  && lib.mlDsa.dsa65)  || null;
+    const ml_kem768 = lib.ml_kem768 || (lib.mlKem  && lib.mlKem.kem768) || null;
+    if (ml_dsa65 && ml_kem768) return { ml_dsa65, ml_kem768 };
   }
+
+  // Last resort: check if the bundle assigned directly to window
+  const w = typeof window !== 'undefined' ? window : {};
+  for (const key of Object.keys(w)) {
+    const obj = w[key];
+    if (obj && typeof obj === 'object' && obj.ml_dsa65 && obj.ml_kem768) {
+      return { ml_dsa65: obj.ml_dsa65, ml_kem768: obj.ml_kem768 };
+    }
+  }
+
   throw new Error(
-    'noble-pq.js not loaded. Download it and place it in the repo root — see GET_OPENPGP.md. ' +
-    'Until then, please select a classical algorithm (ECDSA P-256, P-384, or RSA-PSS).'
+    'noble-pq.js is loaded but its global variable was not found. ' +
+    'Open the browser console and check what global noble-pq.js sets ' +
+    '(look for ml_dsa65 or ml_kem768). Report this to the project. ' +
+    'For now, select a classical algorithm (ECDSA P-256, P-384, or RSA-PSS).'
   );
 }
 
@@ -319,8 +337,8 @@ async function generateMLDSAKeypair() {
 async function signDataPQ(text, secretKey) {
   const { ml_dsa65 } = getPQLib();
   const msg = new TextEncoder().encode(text);
-  // noble API: sign(msg, secretKey)
-  const sig = ml_dsa65.sign(msg, secretKey);
+  // noble API: sign(secretKey, msg)
+  const sig = ml_dsa65.sign(secretKey, msg);
   return bytesToB64(sig);
 }
 
@@ -331,8 +349,8 @@ async function verifyDataPQ(text, sigB64, publicKeyB64) {
     const msg = new TextEncoder().encode(text);
     const sig = b64ToBytes(sigB64);
     const pub = b64ToBytes(publicKeyB64);
-    // noble API: verify(sig, msg, publicKey)
-    return ml_dsa65.verify(sig, msg, pub);
+    // noble API: verify(publicKey, msg, sig)
+    return ml_dsa65.verify(pub, msg, sig);
   } catch { return false; }
 }
 
@@ -1348,6 +1366,28 @@ if ('serviceWorker' in navigator) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+
+  // PQ library diagnostic — logs what noble-pq.js exposed so we can debug global name issues
+  (function() {
+    const candidates = ['noblePostQuantum','noble_post_quantum','noblePQ'];
+    let found = false;
+    for (const name of candidates) {
+      if (typeof window[name] !== 'undefined') {
+        console.log('[CIPHER//NET] noble-pq.js found as window.' + name,
+          '| ml_dsa65:', typeof window[name].ml_dsa65,
+          '| ml_kem768:', typeof window[name].ml_kem768);
+        found = true; break;
+      }
+    }
+    if (!found) {
+      // Scan all window keys for the lib
+      const keys = Object.keys(window).filter(k => {
+        try { return window[k] && typeof window[k] === 'object' && window[k].ml_dsa65; } catch { return false; }
+      });
+      if (keys.length) console.log('[CIPHER//NET] noble-pq.js found as window.' + keys[0]);
+      else console.warn('[CIPHER//NET] noble-pq.js NOT detected — PQ key generation will fall back to classical.');
+    }
+  })();
 
   if (!window.crypto || !window.crypto.subtle) {
     document.body.innerHTML = '<div class="no-crypto">Web Crypto API unavailable. Use HTTPS, .onion, or localhost.</div>';
