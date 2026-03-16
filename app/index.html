@@ -341,7 +341,29 @@
 </div>
 <div id="screenshot-warn">// SCREENSHOT DETECTED — CONTENT MAY BE CAPTURED</div>
 
-<script src="noble-pq.js"></script>
+<!-- noble-post-quantum: load as ES module and expose globals for app.js -->
+<script type="module">
+  async function loadPQ() {
+    const names = ['noble-post-quantum.js', 'noble-pq.js'];
+    for (const name of names) {
+      try {
+        const mod = await import('./' + name);
+        // Expose as globals so app.js (classic script) can access them
+        window.ml_dsa65  = mod.ml_dsa65;
+        window.ml_kem768 = mod.ml_kem768;
+        window._pqLoaded = true;
+        console.log('[CIPHER//NET] ⚛ PQ loaded from', name,
+          '| ml_dsa65:', typeof window.ml_dsa65,
+          '| ml_kem768:', typeof window.ml_kem768);
+        return;
+      } catch (e) {
+        console.warn('[CIPHER//NET] Could not load', name, e.message);
+      }
+    }
+    console.warn('[CIPHER//NET] noble-pq not loaded — PQ unavailable, use classical algo.');
+  }
+  loadPQ();
+</script>
 <script src="openpgp.min.js"></script>
 <script src="app.js"></script>
 </body>

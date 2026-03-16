@@ -285,22 +285,22 @@ function pqAvailable() {
 }
 
 function getPQLib() {
-  // noble-post-quantum standalone bundle exports algorithms directly as globals:
-  // window.ml_dsa65, window.ml_kem768 (confirmed from official docs)
-  const dsa = typeof ml_dsa65  !== 'undefined' ? ml_dsa65  : null;  // eslint-disable-line
-  const kem = typeof ml_kem768 !== 'undefined' ? ml_kem768 : null;  // eslint-disable-line
+  // The noble-post-quantum ES module is loaded async by a <script type="module">
+  // in index.html which assigns window.ml_dsa65 and window.ml_kem768.
+  // Check both direct globals and window properties.
+  const dsa = (typeof ml_dsa65  !== 'undefined' ? ml_dsa65  : null)  // eslint-disable-line
+           || window.ml_dsa65  || null;
+  const kem = (typeof ml_kem768 !== 'undefined' ? ml_kem768 : null)  // eslint-disable-line
+           || window.ml_kem768 || null;
+
   if (dsa && kem) return { ml_dsa65: dsa, ml_kem768: kem };
 
-  // Fallback: some builds wrap in a single object
-  for (const name of ['noblePostQuantum', 'noble_post_quantum', 'noblePQ']) {
-    const lib = typeof window !== 'undefined' && window[name];
-    if (lib && lib.ml_dsa65 && lib.ml_kem768)
-      return { ml_dsa65: lib.ml_dsa65, ml_kem768: lib.ml_kem768 };
-  }
-
   throw new Error(
-    'noble-pq.js not found or not exporting ml_dsa65 / ml_kem768. ' +
-    'Select a classical algorithm (ECDSA P-256, P-384, or RSA-PSS) instead.'
+    'noble-pq.js is not ready yet. ' +
+    'If you just opened the page, wait a moment and try again. ' +
+    'If this keeps happening, make sure noble-post-quantum.js (or noble-pq.js) ' +
+    'is in the same folder as index.html. ' +
+    'Or select a classical algorithm (ECDSA P-256, P-384, or RSA-PSS).'
   );
 }
 
@@ -1355,21 +1355,14 @@ if ('serviceWorker' in navigator) {
 document.addEventListener('DOMContentLoaded', () => {
 
   // PQ library diagnostic — logs what noble-pq.js exposed so we can debug global name issues
-  (function() {
-    // Check direct globals first (confirmed export style for noble-post-quantum.js)
-    if (typeof ml_dsa65 !== 'undefined' && typeof ml_kem768 !== 'undefined') {  // eslint-disable-line
-      console.log('[CIPHER//NET] ⚛ noble-pq.js ready — ml_dsa65 and ml_kem768 loaded as direct globals');
-      return;
+  // PQ lib loads async — check after a short delay to give the module import time
+  setTimeout(function() {
+    if (window.ml_dsa65 && window.ml_kem768) {
+      console.log('[CIPHER//NET] ⚛ PQ ready — ml_dsa65 and ml_kem768 available');
+    } else {
+      console.warn('[CIPHER//NET] PQ not loaded — noble-post-quantum.js missing or failed. Classical algorithms still work.');
     }
-    // Check wrapped object globals
-    for (const name of ['noblePostQuantum','noble_post_quantum','noblePQ']) {
-      if (typeof window[name] !== 'undefined' && window[name].ml_dsa65) {
-        console.log('[CIPHER//NET] ⚛ noble-pq.js ready as window.' + name);
-        return;
-      }
-    }
-    console.warn('[CIPHER//NET] noble-pq.js not detected — PQ algorithms unavailable. Select ECDSA P-256 for classical crypto.');
-  })();
+  }, 500);
 
   if (!window.crypto || !window.crypto.subtle) {
     document.body.innerHTML = '<div class="no-crypto">Web Crypto API unavailable. Use HTTPS, .onion, or localhost.</div>';
