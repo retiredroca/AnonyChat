@@ -341,46 +341,60 @@
 </div>
 <div id="screenshot-warn">// SCREENSHOT DETECTED — CONTENT MAY BE CAPTURED</div>
 
-<!-- noble-post-quantum v0.4.1 sub-module ES imports via jsDelivr CDN -->
-<!-- Falls back to local file if CDN unavailable (e.g. OnionShare) -->
+<!-- noble-post-quantum via esm.sh (bundles all deps into one request) -->
 <script type="module">
-  async function loadFromCDN() {
-    const base = 'https://cdn.jsdelivr.net/npm/@noble/post-quantum@0.4.1';
-    const [dsaMod, kemMod] = await Promise.all([
-      import(base + '/ml-dsa.js'),
-      import(base + '/ml-kem.js'),
-    ]);
-    window.ml_dsa65  = dsaMod.ml_dsa65;
-    window.ml_kem768 = kemMod.ml_kem768;
+  async function tryLoad(url, label) {
+    const m = await import(url);
+    // esm.sh bundles sub-paths — export names vary, try all known patterns
+    const dsa = m.ml_dsa65 || (m.default && m.default.ml_dsa65) || null;
+    const kem = m.ml_kem768 || (m.default && m.default.ml_kem768) || null;
+    if (!dsa || !kem) throw new Error('exports not found in ' + label + ': ' + Object.keys(m).join(', '));
+    window.ml_dsa65  = dsa;
+    window.ml_kem768 = kem;
     window._pqLoaded = true;
-    console.log('[PQ] ⚛ Loaded from CDN | ml_dsa65:', typeof window.ml_dsa65, '| ml_kem768:', typeof window.ml_kem768);
+    console.log('[PQ] ⚛ Ready from', label, '| keys:', Object.keys(m).join(', '));
   }
 
-  async function loadLocal() {
-    const candidates = ['noble-post-quantum.js', 'noble-pq.js'];
-    for (const name of candidates) {
-      try {
-        const m = await import('./' + name);
-        if (m.ml_dsa65 && m.ml_kem768) {
-          window.ml_dsa65  = m.ml_dsa65;
-          window.ml_kem768 = m.ml_kem768;
-          window._pqLoaded = true;
-          console.log('[PQ] ⚛ Loaded from local file:', name);
-          return true;
-        }
-      } catch(e) { /* try next */ }
-    }
-    return false;
-  }
+  const attempts = [
+    // esm.sh bundles everything including deps — most reliable for browser use
+    ['https://esm.sh/@noble/post-quantum@0.4.1/ml-dsa.js', 'esm.sh ml-dsa'],
+    ['https://esm.sh/@noble/post-quantum@0.4.1/ml-kem.js',  'esm.sh ml-kem'],
+  ];
 
+  // Try loading both sub-modules from esm.sh simultaneously
   try {
-    await loadFromCDN();
+    const [dsaMod, kemMod] = await Promise.all([
+      import('https://esm.sh/@noble/post-quantum@0.4.1/ml-dsa.js'),
+      import('https://esm.sh/@noble/post-quantum@0.4.1/ml-kem.js'),
+    ]);
+    const dsa = dsaMod.ml_dsa65 || (dsaMod.default && dsaMod.default.ml_dsa65);
+    const kem = kemMod.ml_kem768 || (kemMod.default && kemMod.default.ml_kem768);
+    if (!dsa || !kem) throw new Error('exports missing. ml-dsa keys: ' + Object.keys(dsaMod).join(',') + ' ml-kem keys: ' + Object.keys(kemMod).join(','));
+    window.ml_dsa65  = dsa;
+    window.ml_kem768 = kem;
+    window._pqLoaded = true;
+    console.log('[PQ] ⚛ Loaded from esm.sh | ml_dsa65:', typeof dsa, '| ml_kem768:', typeof kem);
   } catch(e) {
-    console.warn('[PQ] CDN failed, trying local file:', e.message);
-    const localOk = await loadLocal();
-    if (!localOk) {
-      window._pqError = 'CDN failed (' + e.message + ') and no local file found.';
-      console.error('[PQ] PQ unavailable — select classical algorithm.');
+    console.warn('[PQ] esm.sh failed:', e.message, '— trying local file');
+    // Local file fallback — use absolute path from current page location
+    const base = location.href.substring(0, location.href.lastIndexOf('/') + 1);
+    const localNames = ['noble-post-quantum.js', 'noble-pq.js'];
+    let loaded = false;
+    for (const name of localNames) {
+      try {
+        const m = await import(base + name);
+        const dsa = m.ml_dsa65 || (m.default && m.default.ml_dsa65);
+        const kem = m.ml_kem768 || (m.default && m.default.ml_kem768);
+        if (dsa && kem) {
+          window.ml_dsa65 = dsa; window.ml_kem768 = kem; window._pqLoaded = true;
+          console.log('[PQ] ⚛ Loaded from local file:', name);
+          loaded = true; break;
+        }
+      } catch(le) { console.warn('[PQ] local', name, 'failed:', le.message); }
+    }
+    if (!loaded) {
+      window._pqError = 'esm.sh: ' + e.message;
+      console.error('[PQ] PQ unavailable. Select ECDSA P-256 as algorithm.');
     }
   }
 </script>
