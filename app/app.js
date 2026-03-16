@@ -285,12 +285,18 @@ function pqAvailable() {
 }
 
 function getPQLib() {
-  // noble-post-quantum exposes globals: ml_dsa65, ml_kem768
-  // via the standalone bundle
-  if (typeof ml_dsa65 !== 'undefined') return { ml_dsa65, ml_kem768 };
-  if (typeof noblePostQuantum !== 'undefined')
-    return { ml_dsa65: noblePostQuantum.ml_dsa65, ml_kem768: noblePostQuantum.ml_kem768 };
-  throw new Error('noble-pq.js not loaded — see GET_OPENPGP.md for download instructions.');
+  // noble-post-quantum standalone bundle exposes window.noblePostQuantum
+  if (typeof noblePostQuantum !== 'undefined') {
+    const lib = noblePostQuantum;
+    return {
+      ml_dsa65:  lib.ml_dsa65  || lib['ml-dsa']?.ml_dsa65,
+      ml_kem768: lib.ml_kem768 || lib['ml-kem']?.ml_kem768,
+    };
+  }
+  throw new Error(
+    'noble-pq.js not loaded. Download it and place it in the repo root — see GET_OPENPGP.md. ' +
+    'Until then, please select a classical algorithm (ECDSA P-256, P-384, or RSA-PSS).'
+  );
 }
 
 function b64ToBytes(b64) {
@@ -313,7 +319,8 @@ async function generateMLDSAKeypair() {
 async function signDataPQ(text, secretKey) {
   const { ml_dsa65 } = getPQLib();
   const msg = new TextEncoder().encode(text);
-  const sig = ml_dsa65.sign(secretKey, msg);
+  // noble API: sign(msg, secretKey)
+  const sig = ml_dsa65.sign(msg, secretKey);
   return bytesToB64(sig);
 }
 
@@ -324,7 +331,8 @@ async function verifyDataPQ(text, sigB64, publicKeyB64) {
     const msg = new TextEncoder().encode(text);
     const sig = b64ToBytes(sigB64);
     const pub = b64ToBytes(publicKeyB64);
-    return ml_dsa65.verify(pub, sig, msg);
+    // noble API: verify(sig, msg, publicKey)
+    return ml_dsa65.verify(sig, msg, pub);
   } catch { return false; }
 }
 
@@ -512,6 +520,12 @@ async function generateKeys() {
 
   try {
     if (isPQ) {
+      // Check library is loaded before doing anything
+      try { getPQLib(); } catch (e) {
+        toast('⚛ ' + e.message);
+        btn.disabled = false; btn.innerHTML = 'GENERATE KEYPAIR'; return;
+      }
+
       // Show PQ note
       const note = $('pq-key-note');
       if (note) note.classList.remove('hidden');
