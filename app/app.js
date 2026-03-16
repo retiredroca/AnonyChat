@@ -285,22 +285,23 @@ function pqAvailable() {
 }
 
 function getPQLib() {
-  // The noble-post-quantum ES module is loaded async by a <script type="module">
-  // in index.html which assigns window.ml_dsa65 and window.ml_kem768.
-  // Check both direct globals and window properties.
-  const dsa = (typeof ml_dsa65  !== 'undefined' ? ml_dsa65  : null)  // eslint-disable-line
-           || window.ml_dsa65  || null;
-  const kem = (typeof ml_kem768 !== 'undefined' ? ml_kem768 : null)  // eslint-disable-line
-           || window.ml_kem768 || null;
-
+  const dsa = window.ml_dsa65  || null;
+  const kem = window.ml_kem768 || null;
   if (dsa && kem) return { ml_dsa65: dsa, ml_kem768: kem };
 
+  // Build a helpful error message based on what we know
+  let why = '';
+  if (window._pqError) {
+    why = ' Load error: ' + window._pqError + '.';
+  } else if (!window._pqLoaded) {
+    why = ' The file may be missing, misnamed, or blocked by the server.';
+  }
+
   throw new Error(
-    'noble-pq.js is not ready yet. ' +
-    'If you just opened the page, wait a moment and try again. ' +
-    'If this keeps happening, make sure noble-post-quantum.js (or noble-pq.js) ' +
-    'is in the same folder as index.html. ' +
-    'Or select a classical algorithm (ECDSA P-256, P-384, or RSA-PSS).'
+    'Post-quantum library not available.' + why + ' ' +
+    'Check the browser console for [PQ] messages. ' +
+    'Make sure noble-post-quantum.js is in the same folder as index.html. ' +
+    'Alternatively, select ECDSA P-256, P-384, or RSA-PSS.'
   );
 }
 
