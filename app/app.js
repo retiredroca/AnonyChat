@@ -325,8 +325,8 @@ async function generateMLDSAKeypair() {
 async function signDataPQ(text, secretKey) {
   const { ml_dsa65 } = getPQLib();
   const msg = new TextEncoder().encode(text);
-  // noble API: sign(msg, secretKey)
-  const sig = ml_dsa65.sign(msg, secretKey);
+  // noble v0.4.1 API: sign(secretKey, msg)
+  const sig = ml_dsa65.sign(secretKey, msg);
   return bytesToB64(sig);
 }
 
@@ -337,8 +337,8 @@ async function verifyDataPQ(text, sigB64, publicKeyB64) {
     const msg = new TextEncoder().encode(text);
     const sig = b64ToBytes(sigB64);
     const pub = b64ToBytes(publicKeyB64);
-    // noble API: verify(sig, msg, publicKey)
-    return ml_dsa65.verify(sig, msg, pub);
+    // noble v0.4.1 API: verify(publicKey, msg, sig)
+    return ml_dsa65.verify(pub, msg, sig);
   } catch { return false; }
 }
 

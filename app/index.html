@@ -341,29 +341,47 @@
 </div>
 <div id="screenshot-warn">// SCREENSHOT DETECTED — CONTENT MAY BE CAPTURED</div>
 
-<!-- noble-post-quantum: ES module — imported and assigned to window globals -->
+<!-- noble-post-quantum v0.4.1 sub-module ES imports via jsDelivr CDN -->
+<!-- Falls back to local file if CDN unavailable (e.g. OnionShare) -->
 <script type="module">
-  const candidates = ['noble-post-quantum.js', 'noble-pq.js'];
-  for (const name of candidates) {
-    try {
-      const m = await import('./' + name);
-      if (m.ml_dsa65 && m.ml_kem768) {
-        window.ml_dsa65  = m.ml_dsa65;
-        window.ml_kem768 = m.ml_kem768;
-        window._pqLoaded = true;
-        console.log('[PQ] ⚛ Ready from', name);
-        break;
-      } else {
-        console.warn('[PQ]', name, 'loaded but ml_dsa65/ml_kem768 not found in exports:', Object.keys(m));
-        window._pqError = 'exports not found in ' + name + ': ' + Object.keys(m).join(', ');
-      }
-    } catch(e) {
-      console.warn('[PQ] Failed to import', name + ':', e.message);
-      window._pqError = e.message;
-    }
+  async function loadFromCDN() {
+    const base = 'https://cdn.jsdelivr.net/npm/@noble/post-quantum@0.4.1';
+    const [dsaMod, kemMod] = await Promise.all([
+      import(base + '/ml-dsa.js'),
+      import(base + '/ml-kem.js'),
+    ]);
+    window.ml_dsa65  = dsaMod.ml_dsa65;
+    window.ml_kem768 = kemMod.ml_kem768;
+    window._pqLoaded = true;
+    console.log('[PQ] ⚛ Loaded from CDN | ml_dsa65:', typeof window.ml_dsa65, '| ml_kem768:', typeof window.ml_kem768);
   }
-  if (!window._pqLoaded) {
-    console.error('[PQ] PQ library unavailable — use classical algorithm.');
+
+  async function loadLocal() {
+    const candidates = ['noble-post-quantum.js', 'noble-pq.js'];
+    for (const name of candidates) {
+      try {
+        const m = await import('./' + name);
+        if (m.ml_dsa65 && m.ml_kem768) {
+          window.ml_dsa65  = m.ml_dsa65;
+          window.ml_kem768 = m.ml_kem768;
+          window._pqLoaded = true;
+          console.log('[PQ] ⚛ Loaded from local file:', name);
+          return true;
+        }
+      } catch(e) { /* try next */ }
+    }
+    return false;
+  }
+
+  try {
+    await loadFromCDN();
+  } catch(e) {
+    console.warn('[PQ] CDN failed, trying local file:', e.message);
+    const localOk = await loadLocal();
+    if (!localOk) {
+      window._pqError = 'CDN failed (' + e.message + ') and no local file found.';
+      console.error('[PQ] PQ unavailable — select classical algorithm.');
+    }
   }
 </script>
 <script src="openpgp.min.js"></script>
