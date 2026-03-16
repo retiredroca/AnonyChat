@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="CIPHER//NET — self-hosted end-to-end encrypted chat. your server, no accounts, no tracking. AES-256-GCM, ECDSA, ECDH, PGP compatible.">
+<meta name="description" content="CIPHER//NET — self-hosted end-to-end encrypted chat. No servers, no accounts, no tracking. AES-256-GCM, ECDSA, ECDH, PGP compatible.">
 <meta property="og:title" content="CIPHER//NET">
-<meta property="og:description" content="End-to-end encrypted chat. Your Server. No accounts. Just keys.">
+<meta property="og:description" content="End-to-end encrypted chat. No servers. No accounts. Just keys.">
 <meta property="og:type" content="website">
 <title>CIPHER//NET</title>
 <style>
@@ -131,33 +131,40 @@ nav {
 }
 
 .hero-eyebrow {
-  font-size: 11px;
-  letter-spacing: 6px;
+  font-size: clamp(8px, 2vw, 11px);
+  letter-spacing: clamp(2px, 1vw, 6px);
   color: var(--text-faint);
   margin-bottom: 20px;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .hero-title {
   font-family: var(--display);
-  font-size: clamp(52px, 10vw, 96px);
+  /* Scale fluidly: 8vw hits ~31px on 390px phone, 96px on 1200px desktop */
+  font-size: clamp(32px, 8vw, 96px);
   color: var(--green);
   text-shadow: var(--glow-strong);
-  letter-spacing: 8px;
+  /* Scale letter-spacing with font size so it never overflows */
+  letter-spacing: clamp(2px, 1.2vw, 10px);
   line-height: 1;
   margin-bottom: 8px;
   position: relative;
   z-index: 1;
+  /* Prevent overflow on any screen */
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .hero-title span { color: var(--text-dim); text-shadow: none; }
 
 .hero-sub {
   font-family: var(--display);
-  font-size: clamp(18px, 3vw, 28px);
+  font-size: clamp(14px, 3.5vw, 28px);
   color: var(--text-dim);
-  letter-spacing: 4px;
+  letter-spacing: clamp(1px, 0.8vw, 4px);
   margin-bottom: 32px;
+  white-space: nowrap;
 }
 
 .hero-desc {
@@ -446,12 +453,53 @@ footer {
 footer a { color: var(--text-faint); text-decoration: none; }
 footer a:hover { color: var(--green); }
 
+/* ── Prevent horizontal overflow globally ── */
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 /* ── Responsive ── */
-@media (max-width: 600px) {
-  nav { padding: 12px 16px; }
-  .nav-links { gap: 16px; }
-  .spec-item { border-right: none; border-bottom: 1px solid var(--border); width: 100%; }
+@media (max-width: 700px) {
+  /* Nav — hide links, just show logo */
+  nav { padding: 10px 16px; }
+  .nav-links { display: none; }
+
+  /* Hero */
+  .hero { padding: 80px 16px 40px; }
+  .hero-desc  { font-size: 12px; }
+  .hero-btns  { flex-direction: column; align-items: center; width: 100%; }
+  .btn-primary, .btn-outline { width: 100%; max-width: 320px; text-align: center; }
+
+  /* Terminal — constrain width and shrink text */
+  .terminal-wrap { margin-top: 32px; }
+  .terminal-body { padding: 12px; font-size: 10px; overflow-x: auto; }
+  .t-line        { white-space: nowrap; }
+
+  /* Spec bar — stack vertically */
+  .spec-bar   { flex-direction: column; align-items: stretch; padding: 0; }
+  .spec-item  {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
   .spec-item:last-child { border-bottom: none; }
+  .spec-item strong { display: inline; margin-bottom: 0; margin-right: 4px; }
+
+  /* Features */
+  .features { padding: 48px 16px; }
+  .features-grid { grid-template-columns: 1fr; }
+  .feature-card { padding: 20px 16px; }
+
+  /* CTA */
+  .cta { padding: 48px 16px; }
+  .cta-btns { flex-direction: column; align-items: center; width: 100%; }
+
+  /* Footer */
+  footer { font-size: 9px; padding: 16px; word-break: break-word; }
 }
 </style>
 </head>
@@ -473,13 +521,13 @@ footer a:hover { color: var(--green); }
   <h1 class="hero-title">CIPHER<span>//</span>NET<span class="cursor"></span></h1>
   <div class="hero-sub">END-TO-END ENCRYPTED CHAT</div>
   <p class="hero-desc">
-    Your Server. No accounts. No tracking.<br>
+    No servers. No accounts. No tracking.<br>
     Your identity is a <em>cryptographic keypair</em> generated in your browser.
     Messages are encrypted with <em>AES-256-GCM</em> and signed with <em>ECDSA</em>.
     Nothing leaves your device unencrypted.
   </p>
   <div class="hero-btns">
-    <a class="btn-primary" href="app/index.html">Try APP</a>
+    <a class="btn-primary" href="app/index.html">LAUNCH APP</a>
     <a class="btn-outline" href="https://github.com/retiredroca/AnonyChat" target="_blank" rel="noopener">VIEW SOURCE</a>
   </div>
 
@@ -535,7 +583,7 @@ footer a:hover { color: var(--green); }
       <div class="feature-title">Keypair Identity</div>
       <div class="feature-desc">
         Your account is a <em>public/private keypair</em> generated entirely in your browser.
-        No email, no password, Your server. Your private key is shown once and never stored.
+        No email, no password, no server. Your private key is shown once and never stored.
       </div>
     </div>
 
@@ -622,7 +670,7 @@ footer a:hover { color: var(--green); }
   <div class="cta-title">READY TO TRANSMIT?</div>
   <div class="cta-sub">// No account needed. Generate a keypair and you&apos;re in.</div>
   <div class="cta-btns">
-    <a class="btn-primary" href="app/index.html">Try CIPHER//NET</a>
+    <a class="btn-primary" href="app/index.html">LAUNCH CIPHER//NET</a>
     <a class="btn-outline" href="https://github.com/retiredroca/AnonyChat/archive/refs/heads/main.zip">DOWNLOAD ZIP</a>
     <a class="btn-outline" href="https://github.com/retiredroca/AnonyChat" target="_blank" rel="noopener">GITHUB REPO</a>
   </div>
@@ -630,7 +678,7 @@ footer a:hover { color: var(--green); }
 
 <!-- FOOTER -->
 <footer>
-  <span>CIPHER//NET &mdash; AGPL-3 LICENSE &mdash; </span>
+  <span>CIPHER//NET &mdash; MIT LICENSE &mdash; </span>
   <a href="https://github.com/retiredroca/AnonyChat" target="_blank" rel="noopener">GITHUB</a>
   <span> &mdash; BUILT WITH WEB CRYPTO API &mdash; ZERO SERVERS &mdash; ZERO TRACKING</span>
 </footer>
