@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="CIPHER//NET — self-hosted end-to-end encrypted chat. No servers, no accounts, no tracking. AES-256-GCM, ECDSA, ECDH, PGP compatible.">
+<meta property="og:title" content="CIPHER//NET">
+<meta property="og:description" content="End-to-end encrypted chat. No servers. No accounts. Just keys.">
+<meta property="og:type" content="website">
+<title>CIPHER//NET</title>
+<style>
+/* ── Variables ── */
+:root {
+  --bg:         #030a03;
+  --bg2:        #070f07;
+  --surface:    #0d1a0d;
+  --border:     #1a3a1a;
+  --green:      #00e500;
+  --green2:     #00b800;
+  --green3:     #007a00;
+  --green-dim:  #004d00;
+  --amber:      #ffb300;
+  --text:       #c8f0c8;
+  --text-dim:   #5a8a5a;
+  --text-faint: #2a4a2a;
+  --mono:       'Share Tech Mono', 'Lucida Console', 'Courier New', monospace;
+  --display:    'VT323', 'Courier New', monospace;
+  --glow:       0 0 8px rgba(0,229,0,0.4);
+  --glow-strong:0 0 24px rgba(0,229,0,0.6);
+}
+
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--mono);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Scanline overlay ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.08) 2px,
+    rgba(0,0,0,0.08) 4px
+  );
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* ── Nav ── */
+nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 32px;
+  background: rgba(3,10,3,0.92);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(4px);
+}
+
+.nav-logo {
+  font-family: var(--display);
+  font-size: 22px;
+  color: var(--green);
+  text-shadow: var(--glow);
+  letter-spacing: 3px;
+  text-decoration: none;
+}
+
+.nav-logo span { color: var(--text-dim); }
+
+.nav-links {
+  display: flex;
+  gap: 24px;
+  list-style: none;
+}
+
+.nav-links a {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  transition: color 0.2s;
+}
+
+.nav-links a:hover { color: var(--green); }
+
+/* ── Hero ── */
+.hero {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 100px 24px 60px;
+  position: relative;
+}
+
+/* Animated grid bg */
+.hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(0,229,0,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,229,0,0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  animation: gridPulse 8s ease-in-out infinite;
+}
+
+@keyframes gridPulse {
+  0%, 100% { opacity: 0.5; }
+  50%       { opacity: 1; }
+}
+
+.hero-eyebrow {
+  font-size: 11px;
+  letter-spacing: 6px;
+  color: var(--text-faint);
+  margin-bottom: 20px;
+  text-transform: uppercase;
+}
+
+.hero-title {
+  font-family: var(--display);
+  font-size: clamp(52px, 10vw, 96px);
+  color: var(--green);
+  text-shadow: var(--glow-strong);
+  letter-spacing: 8px;
+  line-height: 1;
+  margin-bottom: 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.hero-title span { color: var(--text-dim); text-shadow: none; }
+
+.hero-sub {
+  font-family: var(--display);
+  font-size: clamp(18px, 3vw, 28px);
+  color: var(--text-dim);
+  letter-spacing: 4px;
+  margin-bottom: 32px;
+}
+
+.hero-desc {
+  max-width: 560px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.8;
+  letter-spacing: 1px;
+  margin-bottom: 48px;
+  position: relative;
+  z-index: 1;
+}
+
+.hero-desc em {
+  color: var(--green2);
+  font-style: normal;
+}
+
+.hero-btns {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+}
+
+.btn-primary {
+  display: inline-block;
+  padding: 14px 32px;
+  background: var(--green);
+  color: var(--bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-decoration: none;
+  text-transform: uppercase;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.btn-primary:hover {
+  background: var(--green2);
+  box-shadow: var(--glow-strong);
+}
+
+.btn-outline {
+  display: inline-block;
+  padding: 13px 32px;
+  background: transparent;
+  color: var(--green);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 3px;
+  text-decoration: none;
+  text-transform: uppercase;
+  border: 1px solid var(--green-dim);
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, box-shadow 0.2s;
+}
+
+.btn-outline:hover {
+  border-color: var(--green);
+  color: var(--green);
+  box-shadow: var(--glow);
+}
+
+/* Blinking cursor */
+.cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--green);
+  margin-left: 4px;
+  vertical-align: middle;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* ── Terminal preview ── */
+.terminal-wrap {
+  width: 100%;
+  max-width: 680px;
+  margin: 48px auto 0;
+  position: relative;
+  z-index: 1;
+}
+
+.terminal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  overflow: hidden;
+}
+
+.terminal-bar {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.t-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--green-dim);
+}
+
+.t-dot.active { background: var(--green); box-shadow: var(--glow); }
+
+.terminal-url {
+  flex: 1;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 1px;
+}
+
+.terminal-body {
+  padding: 20px;
+  line-height: 2;
+}
+
+.t-line { display: flex; gap: 12px; }
+
+.t-prompt { color: var(--green3); user-select: none; }
+
+.t-cmd    { color: var(--text); }
+.t-out    { color: var(--text-dim); padding-left: 20px; }
+.t-ok     { color: var(--green); }
+.t-warn   { color: var(--amber); }
+.t-gap    { height: 8px; }
+
+/* ── Features ── */
+.features {
+  padding: 80px 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.section-header {
+  text-align: center;
+  margin-bottom: 56px;
+}
+
+.section-label {
+  font-size: 10px;
+  letter-spacing: 6px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-family: var(--display);
+  font-size: clamp(28px, 4vw, 42px);
+  color: var(--green);
+  letter-spacing: 4px;
+  text-shadow: var(--glow);
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1px;
+  border: 1px solid var(--border);
+}
+
+.feature-card {
+  background: var(--surface);
+  padding: 28px;
+  border: none;
+  transition: background 0.2s;
+}
+
+.feature-card:hover { background: var(--bg2); }
+
+.feature-icon {
+  font-family: var(--display);
+  font-size: 28px;
+  color: var(--green);
+  text-shadow: var(--glow);
+  margin-bottom: 12px;
+  letter-spacing: 2px;
+}
+
+.feature-title {
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--text);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.feature-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.8;
+  letter-spacing: 0.5px;
+}
+
+.feature-desc em {
+  color: var(--green2);
+  font-style: normal;
+}
+
+/* ── Crypto spec bar ── */
+.spec-bar {
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 18px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0;
+}
+
+.spec-item {
+  padding: 6px 24px;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--text-faint);
+  border-right: 1px solid var(--border);
+  text-align: center;
+}
+
+.spec-item:last-child { border-right: none; }
+
+.spec-item strong {
+  display: block;
+  color: var(--green2);
+  font-size: 12px;
+  letter-spacing: 1px;
+  margin-bottom: 2px;
+}
+
+/* ── CTA ── */
+.cta {
+  padding: 80px 24px;
+  text-align: center;
+  border-top: 1px solid var(--border);
+}
+
+.cta-title {
+  font-family: var(--display);
+  font-size: clamp(28px, 4vw, 48px);
+  color: var(--green);
+  letter-spacing: 4px;
+  text-shadow: var(--glow);
+  margin-bottom: 16px;
+}
+
+.cta-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 2px;
+  margin-bottom: 40px;
+}
+
+.cta-btns {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ── Footer ── */
+footer {
+  border-top: 1px solid var(--border);
+  padding: 24px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 2px;
+}
+
+footer a { color: var(--text-faint); text-decoration: none; }
+footer a:hover { color: var(--green); }
+
+/* ── Responsive ── */
+@media (max-width: 600px) {
+  nav { padding: 12px 16px; }
+  .nav-links { gap: 16px; }
+  .spec-item { border-right: none; border-bottom: 1px solid var(--border); width: 100%; }
+  .spec-item:last-child { border-bottom: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a class="nav-logo" href="#">CIPHER<span>//</span>NET</a>
+  <ul class="nav-links">
+    <li><a href="#features">Features</a></li>
+    <li><a href="#crypto">Crypto</a></li>
+    <li><a href="https://github.com/retiredroca/AnonyChat" target="_blank" rel="noopener">GitHub</a></li>
+  </ul>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-eyebrow">// SECURE · PRIVATE · SELF-HOSTED</div>
+  <h1 class="hero-title">CIPHER<span>//</span>NET<span class="cursor"></span></h1>
+  <div class="hero-sub">END-TO-END ENCRYPTED CHAT</div>
+  <p class="hero-desc">
+    No servers. No accounts. No tracking.<br>
+    Your identity is a <em>cryptographic keypair</em> generated in your browser.
+    Messages are encrypted with <em>AES-256-GCM</em> and signed with <em>ECDSA</em>.
+    Nothing leaves your device unencrypted.
+  </p>
+  <div class="hero-btns">
+    <a class="btn-primary" href="app/index.html">LAUNCH APP</a>
+    <a class="btn-outline" href="https://github.com/retiredroca/AnonyChat" target="_blank" rel="noopener">VIEW SOURCE</a>
+  </div>
+
+  <!-- Terminal preview -->
+  <div class="terminal-wrap">
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="t-dot active"></div>
+        <div class="t-dot"></div>
+        <div class="t-dot"></div>
+        <div class="terminal-url">cipher//net — secure session</div>
+      </div>
+      <div class="terminal-body">
+        <div class="t-line"><span class="t-prompt">&gt;</span><span class="t-cmd">generating ECDSA P-256 keypair...</span></div>
+        <div class="t-line"><span class="t-out t-ok">✓ signing keypair ready · fp:a3f8c21d</span></div>
+        <div class="t-line"><span class="t-out t-ok">✓ ECDH P-256 DM keypair ready</span></div>
+        <div class="t-gap"></div>
+        <div class="t-line"><span class="t-prompt">&gt;</span><span class="t-cmd">deriving channel key [#general]...</span></div>
+        <div class="t-line"><span class="t-out t-ok">✓ AES-256-GCM active · PBKDF2-SHA256 · 200k iter</span></div>
+        <div class="t-gap"></div>
+        <div class="t-line"><span class="t-prompt">&gt;</span><span class="t-cmd">incoming message from fp:7b2e9f14</span></div>
+        <div class="t-line"><span class="t-out t-ok">✓ decrypted · ✓ signature valid · ECDSA-P256</span></div>
+        <div class="t-line"><span class="t-out">"the transmission is secure"</span></div>
+        <div class="t-gap"></div>
+        <div class="t-line"><span class="t-prompt">&gt;</span><span class="t-cmd">status<span class="cursor"></span></span></div>
+        <div class="t-line"><span class="t-out t-ok">✓ CIPHER//NET ONLINE · NO EXTERNAL REQUESTS · ZERO SERVERS</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CRYPTO SPEC BAR -->
+<div class="spec-bar" id="crypto">
+  <div class="spec-item"><strong>AES-256-GCM</strong>Channel Encryption</div>
+  <div class="spec-item"><strong>ECDSA P-256</strong>Message Signing</div>
+  <div class="spec-item"><strong>ECDH P-256</strong>DM Key Exchange</div>
+  <div class="spec-item"><strong>PBKDF2 · 200k</strong>Key Derivation</div>
+  <div class="spec-item"><strong>RSA-4096</strong>PGP Export</div>
+  <div class="spec-item"><strong>Web Crypto API</strong>Zero Dependencies</div>
+</div>
+
+<!-- FEATURES -->
+<section class="features" id="features">
+  <div class="section-header">
+    <div class="section-label">// capabilities</div>
+    <div class="section-title">WHAT IT DOES</div>
+  </div>
+
+  <div class="features-grid">
+
+    <div class="feature-card">
+      <div class="feature-icon">[🔑]</div>
+      <div class="feature-title">Keypair Identity</div>
+      <div class="feature-desc">
+        Your account is a <em>public/private keypair</em> generated entirely in your browser.
+        No email, no password, no server. Your private key is shown once and never stored.
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">[🔒]</div>
+      <div class="feature-title">Channel Encryption</div>
+      <div class="feature-desc">
+        All channel messages encrypted with <em>AES-256-GCM</em>.
+        Keys derived via <em>PBKDF2</em> (200,000 iterations) from a shared passphrase.
+        No key, no read.
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">[📨]</div>
+      <div class="feature-title">ECDH Direct Messages</div>
+      <div class="feature-desc">
+        DMs use <em>ECDH P-256</em> key exchange. Both parties derive the same
+        AES-256-GCM key independently — no key is ever transmitted.
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">[✍]</div>
+      <div class="feature-title">Signed Messages</div>
+      <div class="feature-desc">
+        Every message is signed with your <em>ECDSA</em> private key.
+        Each message shows <em>✓ SIGNED</em> or <em>✗ INVALID</em>.
+        Tampering is detectable.
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">[🐧]</div>
+      <div class="feature-title">PGP / GPG / Kleopatra</div>
+      <div class="feature-desc">
+        Export an <em>RSA-4096 OpenPGP keypair</em> importable into GPG and Kleopatra.
+        Import existing GPG keys. Encrypt and decrypt PGP messages directly in the app.
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">[🧅]</div>
+      <div class="feature-title">OnionShare / Tor Ready</div>
+      <div class="feature-desc">
+        Zero external requests. No CDN. Fully compliant with OnionShare's strict
+        <em>Content Security Policy</em>. Deploy as a .onion site in minutes.
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">[📱]</div>
+      <div class="feature-title">Installable PWA</div>
+      <div class="feature-desc">
+        Installs to your home screen on Android and iOS as a
+        <em>Progressive Web App</em>. Runs fullscreen, works offline after first load.
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">[🛡]</div>
+      <div class="feature-title">Screen Protection</div>
+      <div class="feature-desc">
+        Text selection and right-click blocked. Screen blanks when window loses focus.
+        PrintScreen triggers a <em>screenshot warning</em>.
+        Keyboard shortcuts for save/print suppressed.
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">[💾]</div>
+      <div class="feature-title">Encrypted Key Export</div>
+      <div class="feature-desc">
+        Private keys can be exported <em>AES-256-GCM encrypted</em> with a password
+        (PBKDF2, 300k iterations). Safe to store in notes or cloud. Useless without the password.
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta">
+  <div class="cta-title">READY TO TRANSMIT?</div>
+  <div class="cta-sub">// No account needed. Generate a keypair and you&apos;re in.</div>
+  <div class="cta-btns">
+    <a class="btn-primary" href="app/index.html">LAUNCH CIPHER//NET</a>
+    <a class="btn-outline" href="https://github.com/retiredroca/AnonyChat/archive/refs/heads/main.zip">DOWNLOAD ZIP</a>
+    <a class="btn-outline" href="https://github.com/retiredroca/AnonyChat" target="_blank" rel="noopener">GITHUB REPO</a>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <span>CIPHER//NET &mdash; MIT LICENSE &mdash; </span>
+  <a href="https://github.com/retiredroca/AnonyChat" target="_blank" rel="noopener">GITHUB</a>
+  <span> &mdash; BUILT WITH WEB CRYPTO API &mdash; ZERO SERVERS &mdash; ZERO TRACKING</span>
+</footer>
+
+</body>
+</html>
