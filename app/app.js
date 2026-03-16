@@ -673,16 +673,12 @@ async function importKey() {
   const btn = $('btn-import');
   btn.textContent = 'VERIFYING...'; btn.disabled = true;
 
-  // Detect PQ key before encryption check
-  const isPQImport = isPQKey(privPem);
-
   // If the pasted value is a CIPHER-ENC encrypted key, decrypt it first
   let pemToImport = privPem;
   if (isEncryptedKey(privPem)) {
     const pw = $('import-password') && $('import-password').value.trim();
     if (!pw) {
       showLoginError('This key is password-protected. Enter the password in the field above.');
-      // Show the password field if hidden
       const pg = $('import-password-group');
       if (pg) { pg.style.display = ''; pg.classList.remove('hidden'); }
       $('import-password') && $('import-password').focus();
@@ -696,6 +692,10 @@ async function importKey() {
       btn.textContent = 'IMPORT AND ENTER'; btn.disabled = false; return;
     }
   }
+
+  // Detect PQ key AFTER decryption — an encrypted PQ key starts with CIPHER-ENC
+  // and only reveals PQ-SK: prefix after decryption
+  const isPQImport = isPQKey(pemToImport);
 
   let signingKey, publicKeyB64, algo, fp, dhPrivKey, dhPubKeyPem;
 
