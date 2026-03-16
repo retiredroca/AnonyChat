@@ -256,6 +256,20 @@ PGP messages encrypted here can be decrypted by any GPG/Kleopatra user and vice 
 
 ## License
 
-MIT License — see [LICENSE](LICENSE).
+Copyright (C) 2026 RetiredRoca, retiredroca
 
-Free to use, modify, and distribute for any purpose. Attribution appreciated but not required.
+This program is free software: you can redistribute it and/or modify it under the terms of the **GNU Affero General Public License** as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+### What this means in practice
+
+- ✅ You can use, study, and modify this software freely
+- ✅ You can distribute copies of it
+- ✅ You can distribute modified versions — but you must release your modifications under AGPL v3 as well
+- ✅ If you run a modified version as a network service, you must make your modified source available to users of that service
+- ❌ You cannot take this code, make proprietary changes, and distribute it without releasing those changes
+
+The AGPL's network use clause means that companies can't fork AnonyChat/ChiperNet, add features, and deploy it as a paid SaaS product without open-sourcing their version. If you build on CryptoChat, your improvements belong to the community too.
